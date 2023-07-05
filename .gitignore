@@ -6,3 +6,6 @@ obj
 
 # Executable
 ssl-tls-proxy
+
+# C formatter lazyvim
+.clang-format
