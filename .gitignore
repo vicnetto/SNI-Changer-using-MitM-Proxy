@@ -1,0 +1,8 @@
+# VSCODE files
+.vscode
+
+# Object files
+obj
+
+# Executable
+ssl-tls-proxy
