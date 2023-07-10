@@ -1,46 +1,43 @@
 #include "socket.h"
 #include <netinet/in.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Usage: %s <proxy_port>\n", argv[0]);
+    if (argc != 3) {
+        printf("Usage: %s <website> <port>\n", argv[0]);
 
         return 1;
     }
 
-    int proxyServerPort = atoi(argv[1]);
+    int hostPort = atoi(argv[2]);
 
-    // Adding the correct address to the tcp socket.
-    struct sockaddr_in proxyServerAddress;
-    setAddress(&proxyServerAddress, INADDR_ANY, proxyServerPort);
+    // Get IP from hostname.
+    char *hostname = argv[1];
+    struct hostent *host;
 
-    // Creating socket and returning the FD.
-    int proxyServerSocket = createSocket(proxyServerAddress, proxyServerPort);
-
-    int clientSocket;
-    socklen_t clientAddressLength = sizeof(struct sockaddr_in);
-
-    char *buffer;
-
-    // Accept and handle client connections
-    while (1) {
-        // Waits for client connection
-        if ((clientSocket = accept(proxyServerSocket,
-                                   (struct sockaddr *)&proxyServerAddress,
-                                   &clientAddressLength)) < 0) {
-            perror("Failed to accept client connection");
-            continue;
-        }
-
-        printf("Accepted client connection in socket %d\n", clientSocket);
-        printf("Message: %s\n", buffer);
-
-        // Handle client connection in a separate function
-        // handleClientConnection(clientSocket);
+    // Request to DNS server the IP of the hostname.
+    if ((host = gethostbyname(hostname)) == NULL) {
+        printf("Error: Could not resolve hostname %s\n", hostname);
+        exit(0);
     }
 
+    uint32_t hostnameIp = *(long *)host->h_addr;
+
+    // Add the correct address to the tcp socket.
+    struct sockaddr_in hostAdress;
+    setAddress(&hostAdress, hostnameIp, hostPort);
+
+    // Create socket and returng the FD.
+    int clientFd = createClientSocket(hostAdress);
+
+    printf("Successfully made the TCP connection to: [%s]:[%d]\n", hostname,
+           hostPort);
+
     // Close the proxy client socket
-    close(proxyServerSocket);
+    close(clientFd);
 
     return 0;
 }
