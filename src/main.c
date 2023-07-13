@@ -1,5 +1,6 @@
-#include "socket/socket.h"
+// #include "socket/socket.h"
 #include "tls/tls-client.h"
+#include "tls/tls-server.h"
 
 #include <netinet/in.h>
 #include <pthread.h>
@@ -8,17 +9,19 @@
 #include <stdlib.h>
 
 int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        printf("Usage: %s <website> <sni> <port>\n", argv[0]);
+    // if (argc != 4) {
+    //     printf("Usage: %s <website> <sni> <port>\n", argv[0]);
 
-        return 1;
-    }
+    //     return 1;
+    // }
 
-    char *peer_hostname = argv[1];
-    char *peer_sni = argv[2];
-    char *peer_port = argv[3];
+    // char *peer_hostname = argv[1];
+    // char *peer_sni = argv[2];
+    // char *peer_port = argv[3];
 
-    createTLSConnectionWithChangedSNI(peer_hostname, peer_sni, peer_port);
+    // createTLSConnectionWithChangedSNI(peer_hostname, peer_sni, peer_port);
+
+    createServerTLSConncection();
 
     // Request to DNS server the IP of the hostname.
     // if ((host = gethostbyname(hostname)) == NULL) {

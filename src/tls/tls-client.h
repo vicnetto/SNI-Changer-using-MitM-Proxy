@@ -1,6 +1,6 @@
 #ifndef TLSCLIENT_H
 
-int createTLSConnectionWithChangedSNI(const char *hostname,
+int createTLSConnectionWithChangedSNI(const char *message, const char *hostname,
                                       const char *new_hostname,
                                       const char *port);
 

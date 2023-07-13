@@ -87,8 +87,8 @@ static BIO *create_socket_bio(const char *hostname, const char *port) {
  * protocol).
  * @return int -> 1 if success.
  */
-int createTLSConnectionWithChangedSNI(const char *hostname, const char *sni,
-                                      const char *port) {
+int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
+                                      const char *sni, const char *port) {
 
     printf("(info) Creating TLS connection:\n");
     printf("(info) Hostname: %s\n", hostname);
@@ -194,7 +194,7 @@ int createTLSConnectionWithChangedSNI(const char *hostname, const char *sni,
     printf("(debug) Successful handshake!\n");
 
     /* Write an HTTP GET request to the peer */
-    if (!SSL_write_ex(ssl, request, strlen(request), &written)) {
+    if (!SSL_write_ex(ssl, request, 2048, &written)) {
         printf("Failed to write HTTP request\n");
         goto end;
     }
@@ -207,9 +207,16 @@ int createTLSConnectionWithChangedSNI(const char *hostname, const char *sni,
      * Get up to sizeof(buf) bytes of the response. We keep reading until the
      * server closes the connection.
      */
+
+    memset(message, 0, 2048);
+    // while (SSL_read_ex(ssl, buf, sizeof(buf), &readbytes)) {
+    //     fwrite(buf, 1, readbytes, stdout);
+    // }
     while (SSL_read_ex(ssl, buf, sizeof(buf), &readbytes)) {
-        fwrite(buf, 1, readbytes, stdout);
+        // Concatene os dados lidos no char* teste
+        strncat(message, buf, readbytes);
     }
+    printf("(info) Message received from server:\n%s", message);
     /* In case the response didn't finish with a newline we add one now */
     printf("\n");
 
