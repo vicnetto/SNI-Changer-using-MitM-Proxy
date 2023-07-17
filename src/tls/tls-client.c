@@ -7,6 +7,12 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#ifndef BUFFER_MAX_SIZE
+#define BUFFER_MAX_SIZE 2048
+#endif /* ifndef BUFFER_MAX_SIZE */
+
+#define READER_BUFFER_SIZE 160
+
 /*
  * Differently than a normal socket, this function creates a BIO_socket. A
  * BIO_socket gives more control over the communication in the transport
@@ -87,8 +93,9 @@ static BIO *create_socket_bio(const char *hostname, const char *port) {
  * protocol).
  * @return int -> 1 if success.
  */
-int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
-                                      const char *sni, const char *port) {
+char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
+                                        const char *sni, const char *port,
+                                        int *bytes) {
 
     printf("(info) Creating TLS connection:\n");
     printf("(info) Hostname: %s\n", hostname);
@@ -100,13 +107,11 @@ int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
     BIO *bio = NULL;
     int response = EXIT_FAILURE;
     size_t written, readbytes;
-    char buf[160];
+    char buf[READER_BUFFER_SIZE];
 
-    char request[200] = "GET / HTTP/1.1\r\nConnection: close\r\nHost: ";
-    strcat(request, hostname);
-    strcat(request, "\r\n\r\n");
-
-    printf("(debug) Request to be sent:\n%s", request);
+    // Add connection close
+    strncpy(message + strlen(message) - 4, "\nConnection: close\r\n\r\n", 22);
+    printf("(debug) Request to be sent:\n%s", message);
 
     /*
      * Create a factory of SSL objects. TLS_client_method() specifies that we
@@ -114,9 +119,11 @@ int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
      */
     ctx = SSL_CTX_new(TLS_client_method());
     if (ctx == NULL) {
-        printf("Failed to create the SSL_CTX\n");
+        printf("(debug) Failed to create the SSL_CTX\n");
         goto end;
     }
+
+    SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
 
     /*
      * Configure the client to abort the handshake if certificate
@@ -194,7 +201,7 @@ int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
     printf("(debug) Successful handshake!\n");
 
     /* Write an HTTP GET request to the peer */
-    if (!SSL_write_ex(ssl, request, 2048, &written)) {
+    if (!SSL_write_ex(ssl, message, 2048, &written)) {
         printf("Failed to write HTTP request\n");
         goto end;
     }
@@ -207,17 +214,30 @@ int createTLSConnectionWithChangedSNI(char *message, const char *hostname,
      * Get up to sizeof(buf) bytes of the response. We keep reading until the
      * server closes the connection.
      */
+    char *response_body = (char *)malloc(BUFFER_MAX_SIZE);
+    int byte_total = 0;
+    int current_allocation_size_for_response = BUFFER_MAX_SIZE;
 
-    memset(message, 0, 2048);
-    // while (SSL_read_ex(ssl, buf, sizeof(buf), &readbytes)) {
-    //     fwrite(buf, 1, readbytes, stdout);
-    // }
+    // Read all the message sent and put into an allocated space of memory. In
+    // case it needs more memory, a realloc is used.
     while (SSL_read_ex(ssl, buf, sizeof(buf), &readbytes)) {
-        // Concatene os dados lidos no char* teste
-        strncat(message, buf, readbytes);
+
+        if (current_allocation_size_for_response - READER_BUFFER_SIZE >=
+            byte_total)
+            memcpy(response_body + byte_total, buf, readbytes);
+        else {
+            current_allocation_size_for_response *= 2;
+            response_body = (char *)realloc(
+                response_body, current_allocation_size_for_response + 1);
+            strncpy(response_body + byte_total, buf, readbytes);
+        }
+
+        byte_total += readbytes;
     }
-    printf("(info) Message received from server:\n%s", message);
-    /* In case the response didn't finish with a newline we add one now */
+
+    response_body = (char *)realloc(response_body, byte_total + 1);
+
+    printf("(info) Message received from server:\n%s", response_body);
     printf("\n");
 
     /*
@@ -271,5 +291,6 @@ end:
     SSL_free(ssl);
     SSL_CTX_free(ctx);
 
-    return response;
+    *bytes = byte_total;
+    return response_body;
 }

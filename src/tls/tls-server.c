@@ -22,7 +22,7 @@
  * ip -> IP of the socket.
  * port -> Port the socket will listen on.
  */
-void setAddress(struct sockaddr_in *address, uint32_t ip, int port) {
+void set_address(struct sockaddr_in *address, uint32_t ip, int port) {
     // Set up proxy server address
     memset(&(*(address)), 0, sizeof(struct sockaddr_in));
     (*address).sin_family = AF_INET;
@@ -33,9 +33,11 @@ void setAddress(struct sockaddr_in *address, uint32_t ip, int port) {
 /**
  * Creates a new socket and returns the FD value.
  *
+ * @param struct sockaddr_in address -> Address of the server.
+ * @param int port -> Port to access the server.
  * @return int -> FD value of the socket.
  */
-int createServerSocket(struct sockaddr_in address, int port) {
+int create_server_socket(struct sockaddr_in address, int port) {
     int socketFd;
 
     // Creates a new socket.
@@ -117,7 +119,7 @@ void extractHost(char *source, char *host, char *port) {
     }
 }
 
-int createServerTLSConncection() {
+int create_server_TLS_connection() {
     /* Ignore broken pipe signals */
     signal(SIGPIPE, SIG_IGN);
 
@@ -126,10 +128,10 @@ int createServerTLSConncection() {
 
     // Add the correct address to the tcp socket.
     struct sockaddr_in server_address;
-    setAddress(&server_address, INADDR_ANY, 8080);
+    set_address(&server_address, INADDR_ANY, 8080);
 
     // Create socket and returng the FD.
-    int server_fd = createServerSocket(server_address, 8080);
+    int server_fd = create_server_socket(server_address, 8080);
 
     while (1) {
         struct sockaddr_in client_address;
@@ -176,18 +178,21 @@ int createServerTLSConncection() {
         if (SSL_accept(ssl) <= 0) {
             ERR_print_errors_fp(stderr);
         } else {
-            memset(buffer, 0, sizeof buffer);
+            memset(buffer, 0, BUFFER_MAX_SIZE);
             SSL_read(ssl, buffer, BUFFER_MAX_SIZE);
             printf("(info) Message received from client:\n%s", buffer);
         }
 
-        createTLSConnectionWithChangedSNI(buffer, host, "www.exampl3.org",
-                                          port);
+        int readbytes;
+        char *teste = createTLSConnectionWithChangedSNI(buffer, host, host,
+                                                        port, &readbytes);
 
-        if (!SSL_write_ex(ssl, buffer, BUFFER_MAX_SIZE, &written)) {
+        if (!SSL_write_ex(ssl, teste, readbytes, &written)) {
             printf("(error) Failed to write HTTP request\n");
             exit(EXIT_FAILURE);
         }
+
+        free(teste);
 
         SSL_shutdown(ssl);
         SSL_free(ssl);

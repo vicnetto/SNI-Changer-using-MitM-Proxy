@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
 
     // createTLSConnectionWithChangedSNI(peer_hostname, peer_sni, peer_port);
 
-    createServerTLSConncection();
+    create_server_TLS_connection();
 
     // Request to DNS server the IP of the hostname.
     // if ((host = gethostbyname(hostname)) == NULL) {
