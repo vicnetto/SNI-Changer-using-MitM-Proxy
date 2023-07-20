@@ -229,16 +229,17 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
             current_allocation_size_for_response *= 2;
             response_body = (char *)realloc(
                 response_body, current_allocation_size_for_response + 1);
-            strncpy(response_body + byte_total, buf, readbytes);
+            memcpy(response_body + byte_total, buf, readbytes);
         }
 
         byte_total += readbytes;
     }
 
+    // Realloc the memory to the total response size.
     response_body = (char *)realloc(response_body, byte_total + 1);
+    response_body[byte_total + 1] = '\0';
 
     printf("(info) Message received from server:\n%s", response_body);
-    printf("\n");
 
     /*
      * Check whether we finished the while loop above normally or as the

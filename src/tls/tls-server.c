@@ -9,10 +9,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../cert/cert.h"
 #include "tls-client.h"
 
-#define CERTIFICATE_LOCATION "cert/cert.pem"
-#define KEY_LOCATION "cert/key.pem"
+#define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
+#define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
 #define BUFFER_MAX_SIZE 2048
 
 /**
@@ -97,16 +98,21 @@ SSL_CTX *create_context() {
  *
  * @param SSL_CTX *ctx -> Context used to create the SSL connections.
  */
-void configure_context(SSL_CTX *ctx) {
+void configure_context(SSL_CTX *ctx, char *hostname) {
+
+    EVP_PKEY *key = NULL;
+    X509 *crt = NULL;
+
+    generate_certificate(ROOT_CA_KEY_LOCATION, ROOT_CA_CERTIFICATE_LOCATION,
+                         &key, &crt, hostname);
     // Set certificate
-    if (SSL_CTX_use_certificate_file(ctx, CERTIFICATE_LOCATION,
-                                     SSL_FILETYPE_PEM) <= 0) {
+    if (SSL_CTX_use_certificate(ctx, crt) <= 0) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
 
     // Set key
-    if (SSL_CTX_use_PrivateKey_file(ctx, KEY_LOCATION, SSL_FILETYPE_PEM) <= 0) {
+    if (SSL_CTX_use_PrivateKey(ctx, key) <= 0) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
@@ -124,7 +130,6 @@ int create_server_TLS_connection() {
     signal(SIGPIPE, SIG_IGN);
 
     SSL_CTX *ctx = create_context();
-    configure_context(ctx);
 
     // Add the correct address to the tcp socket.
     struct sockaddr_in server_address;
@@ -161,7 +166,7 @@ int create_server_TLS_connection() {
 
         // Send a message stating that the connection has been established with
         // the destination server.
-        char *response = "HTTP/1.1 200 Connection Established\r\n\r\n";
+        char *response = "HTTP/1.1 200 OK\r\n\r\n";
         ssize_t bytesSent = write(client_fd, response, strlen(response));
         if (bytesSent < 0) {
             perror("(error) Failed to send response to the client\n");
@@ -171,6 +176,8 @@ int create_server_TLS_connection() {
 
         printf("(debug) Message sent!\n");
 
+        configure_context(ctx, host);
+
         ssl = SSL_new(ctx);
         SSL_set_fd(ssl, client_fd);
 
@@ -178,6 +185,7 @@ int create_server_TLS_connection() {
         if (SSL_accept(ssl) <= 0) {
             ERR_print_errors_fp(stderr);
         } else {
+            printf("(info) TLS established!\n");
             memset(buffer, 0, BUFFER_MAX_SIZE);
             SSL_read(ssl, buffer, BUFFER_MAX_SIZE);
             printf("(info) Message received from client:\n%s", buffer);
