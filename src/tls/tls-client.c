@@ -1,5 +1,6 @@
 #include <asm-generic/errno.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,72 +23,53 @@
 #define READER_BUFFER_SIZE 160
 
 /*
- * Differently than a normal socket, this function creates a BIO_socket. A
- * BIO_socket gives more control over the communication in the transport
- * layer.
+ * Create socket and connect to destination server.
  *
  * @param const char *hostname -> Domain of the website.
  * @param const char *port -> Port of the connection (normally specifies the
  * protocol).
- * @return BIO -> socket;
+ * @return int -> socket;
  */
-static BIO *create_socket_bio(const char *hostname, const char *port) {
-    int sock = -1;
-    BIO_ADDRINFO *ips;
-    const BIO_ADDRINFO *address_info = NULL;
-    BIO *bio;
+static int create_client_socket(const char *hostname, const char *port) {
+    struct sockaddr_in serveraddr;
 
-    /*
-     * Lookup IP address info for the server.
-     */
-    if (!BIO_lookup_ex(hostname, port, BIO_LOOKUP_CLIENT, 0, SOCK_STREAM, 0,
-                       &ips))
-        return NULL;
-
-    /*
-     * Loop through all the possible addresses for the server and find one
-     * we can connect to.
-     */
-    for (address_info = ips; address_info != NULL;
-         address_info = BIO_ADDRINFO_next(address_info)) {
-
-        /*
-         * Create BIO_socket to show errors on the OpenSSL stack.
-         *
-         * It is also possible to use normal functions, if needed.
-         */
-        sock = BIO_socket(BIO_ADDRINFO_family(address_info), SOCK_STREAM, 0, 0);
-        if (sock == -1)
-            continue;
-
-        /* Connect the socket to the server's address */
-        if (!BIO_connect(sock, BIO_ADDRINFO_address(address_info),
-                         BIO_SOCK_NODELAY)) {
-            BIO_closesocket(sock);
-            sock = -1;
-            continue;
-        }
-
-        /* We have a connected socket so break out of the loop */
-        break;
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) {
+        perror("Error creating socket");
+        exit(EXIT_FAILURE);
     }
 
-    /* Free the address information resources we allocated earlier */
-    BIO_ADDRINFO_free(ips);
+    int option = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
 
-    /* If sock is -1 then we've been unable to connect to the server */
-    if (sock == -1)
-        return NULL;
+    if (fcntl(sock, F_SETFL, O_NONBLOCK) == -1) {
+        perror("Error setting socket to non-blocking mode");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
 
-    /* Create a BIO to wrap the socket*/
-    bio = BIO_new(BIO_s_socket());
-    if (bio == NULL)
-        BIO_closesocket(sock);
+    struct hostent *server = gethostbyname(hostname);
+    if (server == NULL) {
+        fprintf(stderr, "Error: Could not resolve hostname\n");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
 
-    /* Associate newly created BIO with the underlying socket. */
-    BIO_set_fd(bio, sock, BIO_CLOSE);
+    memset(&serveraddr, 0, sizeof(serveraddr));
+    serveraddr.sin_family = AF_INET;
+    serveraddr.sin_port = htons(atoi(port));
+    memcpy(&serveraddr.sin_addr.s_addr, server->h_addr, server->h_length);
 
-    return bio;
+    if (connect(sock, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) ==
+        -1) {
+        if (errno != EINPROGRESS) {
+            perror("Error connecting to server");
+            close(sock);
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    return sock;
 }
 
 /*
@@ -112,13 +94,11 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
 
     SSL_CTX *ctx = NULL;
     SSL *ssl;
-    BIO *bio = NULL;
-    int response = EXIT_FAILURE;
+    int response = EXIT_FAILURE, status;
     size_t written, readbytes;
     char buf[READER_BUFFER_SIZE];
 
     // Add connection close
-    strncpy(message + strlen(message) - 4, "\nConnection: close\r\n\r\n", 22);
     printf("(debug) Request to be sent:\n%s", message);
 
     /*
@@ -164,12 +144,12 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
      * Create the underlying transport socket/BIO and associate it with the
      * connection.
      */
-    bio = create_socket_bio(hostname, port);
-    if (bio == NULL) {
+    int clientFd = create_client_socket(hostname, port);
+    if (clientFd <= 0) {
         printf("Failed to create the BIO\n");
         goto end;
     }
-    SSL_set_bio(ssl, bio, bio);
+    SSL_set_fd(ssl, clientFd);
 
     /*
      * Tell the server during the handshake which hostname we are attempting
@@ -193,17 +173,41 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
         goto end;
     }
 
+    fd_set read_fds;
+    int max_fd = clientFd + 1; // One more than the highest file descriptor
+    FD_ZERO(&read_fds);
+    FD_SET(clientFd, &read_fds);
+
     /* Do the handshake with the server */
-    if (SSL_connect(ssl) < 1) {
-        printf("Failed to connect to the server\n");
-        /*
-         * If the failure is due to a verification error we can get more
-         * information about it from SSL_get_verify_result().
-         */
-        if (SSL_get_verify_result(ssl) != X509_V_OK)
-            printf("Verify error: %s\n",
-                   X509_verify_cert_error_string(SSL_get_verify_result(ssl)));
-        goto end;
+    while (1) {
+        printf("(debug) Attempt to handshake with %s...\n", hostname);
+
+        int status = SSL_connect(ssl);
+        // Connection made successfully
+        if (status == 1)
+            break;
+
+        int decodedError = SSL_get_error(ssl, status);
+
+        // Error while creating the connection
+        if (decodedError == SSL_ERROR_WANT_READ) {
+            int result = select(max_fd, &read_fds, NULL, NULL, NULL);
+
+            if (result == -1) {
+                printf("Read-select error.\n");
+                goto end;
+            }
+        } else if (decodedError == SSL_ERROR_WANT_WRITE) {
+            int result = select(max_fd, NULL, &read_fds, NULL, NULL);
+
+            if (result == -1) {
+                printf("Write-select error.\n");
+                goto end;
+            }
+        } else {
+            printf("Error creating SSL connection.  err=%x\n", decodedError);
+            goto end;
+        }
     }
 
     printf("(debug) Successful handshake!\n");
@@ -215,11 +219,10 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
 
     /* Write an HTTP GET request to the peer */
     // const char *request = message;
-
-    if (!SSL_write_ex(ssl, message, strlen(message), &written)) {
-        printf("Failed to write HTTP request\n");
+    status = write_data_in_ssl(ssl, message);
+    if (status == WRITE_ERROR)
         goto end;
-    }
+
     printf("(info) Request sent!\n");
 
     /*
@@ -231,36 +234,45 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
     printf("(info) Message received from server:\n%s", response_body);
 
     /*
-     * Check whether we finished the while loop above normally or as the
-     * result of an error. The 0 argument to SSL_get_error() is the return
-     * code we received from the SSL_read_ex() call. It must be 0 in order
-     * to get here. Normal completion is indicated by SSL_ERROR_ZERO_RETURN.
+     * Closing the connection. Try to close until connection returns a success
+     * value.
      */
-    if (SSL_get_error(ssl, 0) != SSL_ERROR_ZERO_RETURN) {
-        /*
-         * Some error occurred other than a graceful close down by the
-         * peer.
-         */
-        printf("Failed reading remaining data\n");
-        goto end;
+    while (1) {
+        printf("Attempt shutdown connection with %s...\n", hostname);
+
+        int err = SSL_shutdown(ssl);
+        if (err == 1) {
+            break;
+        }
+
+        if (err == -1) {
+            int decodedError = SSL_get_error(ssl, err);
+
+            if (decodedError == SSL_ERROR_WANT_READ) {
+                int result = select(max_fd, &read_fds, NULL, NULL, NULL);
+                if (result == -1) {
+                    printf("(error) Read-select error while closing the "
+                           "connection with %s.\n",
+                           hostname);
+                    exit(-1);
+                }
+            } else if (decodedError == SSL_ERROR_WANT_WRITE) {
+                int result = select(max_fd, NULL, &read_fds, NULL, NULL);
+                if (result == -1) {
+                    printf("(error) Write-select error while closing the "
+                           "connection with %s.\n",
+                           hostname);
+                    exit(-1);
+                }
+            } else {
+                printf("(error) Error closing SSL connection.  err=%x\n",
+                       decodedError);
+                exit(-1);
+            }
+        }
     }
 
-    /*
-     * The peer already shutdown gracefully (we know this because of the
-     * SSL_ERROR_ZERO_RETURN above). We should do the same back.
-     */
-    if (SSL_shutdown(ssl) < 1) {
-        /*
-         * ret < 0 indicates an error. ret == 0 would be unexpected here
-         * because that means "we've sent a close_notify and we're waiting
-         * for one back". But we already know we got one from the peer
-         * because of the SSL_ERROR_ZERO_RETURN above.
-         */
-        printf("Error shutting down\n");
-        goto end;
-    }
-
-    printf("(info) Closing connection!\n");
+    printf("(info) Connection closed!\n");
 
     /* Success! */
     response = EXIT_SUCCESS;
