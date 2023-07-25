@@ -60,7 +60,7 @@ error:
     return 0;
 }
 
-int generate_certificate_key(EVP_PKEY **key, X509_REQ **req) {
+int generate_certificate_key(EVP_PKEY **key, X509_REQ **req, char *hostname) {
     // Create key
     *key = EVP_PKEY_new();
     if (!*key)
@@ -94,8 +94,7 @@ int generate_certificate_key(EVP_PKEY **key, X509_REQ **req) {
                                (const unsigned char *)DN_ORGANIZATION_UNIT, -1,
                                -1, 0);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
-                               (const unsigned char *)DN_COMMON_NAME, -1, -1,
-                               0);
+                               (const unsigned char *)hostname, -1, -1, 0);
 
     // Self-sign the certificate to show that we possess the private key
     // associated with the certificate.
@@ -143,7 +142,7 @@ int sign_certificate(EVP_PKEY *ca_key, X509 *ca_crt, EVP_PKEY **key, X509 **crt,
 
     // Create private key and request CSR.
     X509_REQ *req = NULL;
-    if (!generate_certificate_key(key, &req))
+    if (!generate_certificate_key(key, &req, hostname))
         return 0;
 
     *crt = X509_new();
