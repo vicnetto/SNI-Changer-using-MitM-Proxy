@@ -3,7 +3,7 @@ CFLAGS=-Wall -Wextra -g3
 LIBS=-lssl -lcrypto
 # Add -Werror when possible
 TARGET=ssl-tls-proxy
-OBJECTS=obj/main.o obj/tls-client.o obj/tls-server.o
+OBJECTS=obj/main.o obj/tls-client.o obj/tls-server.o obj/cert.o obj/buffer-reader.o
 
 all: create_object_and_out_directories $(TARGET)
 
@@ -18,6 +18,12 @@ obj/tls-client.o: src/tls/tls-client.c
 
 obj/tls-server.o: src/tls/tls-server.c
 	$(CC) $(CFLAGS) -o obj/tls-server.o -c src/tls/tls-server.c
+
+obj/cert.o: src/cert/cert.c
+	$(CC) $(CFLAGS) -o obj/cert.o -c src/cert/cert.c
+
+obj/buffer-reader.o: src/buffer/buffer-reader.c
+	$(CC) $(CFLAGS) -o obj/buffer-reader.o -c src/buffer/buffer-reader.c
 
 create_object_and_out_directories: 
 	mkdir -p obj

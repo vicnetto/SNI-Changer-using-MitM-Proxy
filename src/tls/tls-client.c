@@ -1,3 +1,5 @@
+#include <asm-generic/errno.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +8,12 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+
+#include <netdb.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "../buffer/buffer-reader.h"
 
 #ifndef BUFFER_MAX_SIZE
 #define BUFFER_MAX_SIZE 2048
@@ -200,45 +208,26 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
 
     printf("(debug) Successful handshake!\n");
 
+    // const char *testando = "GET / HTTP/1.1\r\n"
+    //                        "Host: www.google.com\r\n"
+    //                        "User-Agent: curl/8.1.2\r\n"
+    //                        "Accept: */*\r\n\r\n";
+
     /* Write an HTTP GET request to the peer */
-    if (!SSL_write_ex(ssl, message, 2048, &written)) {
+    // const char *request = message;
+
+    if (!SSL_write_ex(ssl, message, strlen(message), &written)) {
         printf("Failed to write HTTP request\n");
         goto end;
     }
-
     printf("(info) Request sent!\n");
-
-    printf("(info) Message received!\n");
 
     /*
      * Get up to sizeof(buf) bytes of the response. We keep reading until the
      * server closes the connection.
      */
-    char *response_body = (char *)malloc(BUFFER_MAX_SIZE);
-    int byte_total = 0;
-    int current_allocation_size_for_response = BUFFER_MAX_SIZE;
-
-    // Read all the message sent and put into an allocated space of memory. In
-    // case it needs more memory, a realloc is used.
-    while (SSL_read_ex(ssl, buf, sizeof(buf), &readbytes)) {
-
-        if (current_allocation_size_for_response - READER_BUFFER_SIZE >=
-            byte_total)
-            memcpy(response_body + byte_total, buf, readbytes);
-        else {
-            current_allocation_size_for_response *= 2;
-            response_body = (char *)realloc(
-                response_body, current_allocation_size_for_response + 1);
-            memcpy(response_body + byte_total, buf, readbytes);
-        }
-
-        byte_total += readbytes;
-    }
-
-    // Realloc the memory to the total response size.
-    response_body = (char *)realloc(response_body, byte_total + 1);
-    response_body[byte_total + 1] = '\0';
-
+    int total_bytes = 0;
+    char *response_body = read_data_from_ssl(ssl, &total_bytes);
     printf("(info) Message received from server:\n%s", response_body);
 
     /*
@@ -292,6 +281,6 @@ end:
     SSL_free(ssl);
     SSL_CTX_free(ctx);
 
-    *bytes = byte_total;
+    *bytes = total_bytes;
     return response_body;
 }

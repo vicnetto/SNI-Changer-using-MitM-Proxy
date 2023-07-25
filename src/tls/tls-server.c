@@ -9,12 +9,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../buffer/buffer-reader.h"
 #include "../cert/cert.h"
 #include "tls-client.h"
 
 #define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
 #define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
-#define BUFFER_MAX_SIZE 2048
+#define BUFFER_MAX_SIZE 4096
 
 /**
  * Configures the address of the socket.
@@ -116,6 +117,8 @@ void configure_context(SSL_CTX *ctx, char *hostname) {
         ERR_print_errors_fp(stderr);
         exit(EXIT_FAILURE);
     }
+
+    SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
 }
 
 void extractHost(char *source, char *host, char *port) {
@@ -153,6 +156,9 @@ int create_server_TLS_connection() {
             exit(EXIT_FAILURE);
         }
 
+        printf("========================== BEGIN "
+               "===============================\n");
+
         // Read the request from the client.
         read(client_fd, buffer, BUFFER_MAX_SIZE);
         printf("(info) Message:\n%s", buffer);
@@ -166,8 +172,9 @@ int create_server_TLS_connection() {
 
         // Send a message stating that the connection has been established with
         // the destination server.
-        char *response = "HTTP/1.1 200 OK\r\n\r\n";
-        ssize_t bytesSent = write(client_fd, response, strlen(response));
+        char *proxy_response = "HTTP/1.1 200 OK\r\n\r\n";
+        ssize_t bytesSent =
+            write(client_fd, proxy_response, strlen(proxy_response));
         if (bytesSent < 0) {
             perror("(error) Failed to send response to the client\n");
             close(client_fd);
@@ -188,19 +195,26 @@ int create_server_TLS_connection() {
             printf("(info) TLS established!\n");
             memset(buffer, 0, BUFFER_MAX_SIZE);
             SSL_read(ssl, buffer, BUFFER_MAX_SIZE);
-            printf("(info) Message received from client:\n%s", buffer);
+            // int total_bytes;
+            // char *testando;
+            // testando = read_data_from_ssl(ssl, &total_bytes);
+            printf("(info) Message received from client (size: %ld):\n%s",
+                   strlen(buffer), buffer);
         }
 
         int readbytes;
-        char *teste = createTLSConnectionWithChangedSNI(buffer, host, host,
-                                                        port, &readbytes);
+        char *response = createTLSConnectionWithChangedSNI(buffer, host, host,
+                                                           port, &readbytes);
 
-        if (!SSL_write_ex(ssl, teste, readbytes, &written)) {
+        if (!SSL_write_ex(ssl, response, readbytes, &written)) {
             printf("(error) Failed to write HTTP request\n");
             exit(EXIT_FAILURE);
         }
 
-        free(teste);
+        free(response);
+
+        printf(
+            "========================== END ===============================\n");
 
         SSL_shutdown(ssl);
         SSL_free(ssl);
