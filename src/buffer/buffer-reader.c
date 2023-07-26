@@ -1,9 +1,11 @@
-#include "buffer-reader.h"
 #include <errno.h>
 #include <openssl/ssl.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+#include "buffer-reader.h"
 
 #define FULL_BUFFER_SIZE 1024
 #define READER_BUFFER_SIZE 160
@@ -35,19 +37,23 @@ static int m_sleep(long m_sec) {
     return res;
 }
 
-char *read_data_from_ssl(SSL *ssl, int *total_bytes) {
+char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
+    int total_bytes = 0;
     int read_bytes;
+    bool has_done_reading = false;
     int current_allocation_size_for_response = FULL_BUFFER_SIZE;
     char read_buffer[READER_BUFFER_SIZE + 1];
     char *body = (char *)malloc(current_allocation_size_for_response);
     int retry_read = 0;
-    sleep(1);
 
     do {
         read_bytes = SSL_read(ssl, read_buffer, READER_BUFFER_SIZE);
         read_buffer[read_bytes] = '\0';
 
         if (read_bytes < 0) {
+            if (!has_done_reading)
+                continue;
+
             int err = SSL_get_error(ssl, read_bytes);
             if (err == SSL_ERROR_WANT_READ) {
                 retry_read++;
@@ -66,24 +72,30 @@ char *read_data_from_ssl(SSL *ssl, int *total_bytes) {
                 break;
             }
         } else {
+            has_done_reading = true;
             retry_read = 0;
 
             if (current_allocation_size_for_response - READER_BUFFER_SIZE >=
-                *total_bytes)
-                memcpy(body + *total_bytes, read_buffer, read_bytes);
+                total_bytes)
+                memcpy(body + total_bytes, read_buffer, read_bytes);
             else {
                 current_allocation_size_for_response *= 2;
                 body = (char *)realloc(
                     body, current_allocation_size_for_response + 1);
-                memcpy(body + *total_bytes, read_buffer, read_bytes);
+                memcpy(body + total_bytes, read_buffer, read_bytes);
             }
 
-            *total_bytes += read_bytes;
+            total_bytes += read_bytes;
         }
     } while (retry_read != MAX_RETRIES);
 
-    body = (char *)realloc(body, *total_bytes + 1);
-    body[*total_bytes + 1] = '\0';
+    if (read_buffer[0] == '0') {
+        if (read_buffer[0] == '0' && read_bytes == -1)
+            *end_connection = true;
+    }
+
+    body = (char *)realloc(body, total_bytes + 1);
+    body[total_bytes + 1] = '\0';
 
     return body;
 }

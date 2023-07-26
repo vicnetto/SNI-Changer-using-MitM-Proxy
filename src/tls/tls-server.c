@@ -13,7 +13,6 @@
 
 #include "../buffer/buffer-reader.h"
 #include "../cert/cert.h"
-#include "tls-client.h"
 #include "tls-common.h"
 
 #define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
@@ -21,16 +20,8 @@
 #define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
 #define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
 #define CONNECT_MAX_SIZE 4096
-#define BUFFER_MAX_SIZE 1024
 
 #define SERVER_PORT 8080
-
-struct ssl_connection {
-    SSL *client;
-    SSL *server;
-    char *host;
-    char *port;
-};
 
 /**
  * Configures the address of the socket.
@@ -206,8 +197,8 @@ int create_server_TLS_connection() {
         printf("(info) Message:\n%s", connect);
 
         // Get the hostname and the port.
-        char host[BUFFER_MAX_SIZE];
-        char port[5];
+        char host[DOMAIN_MAX_SIZE];
+        char port[PORT_MAX_SIZE];
         extractHost(connect, host, port);
 
         printf("(debug) CONNECT Host: %s / Port: %s\n", host, port);
@@ -230,38 +221,25 @@ int create_server_TLS_connection() {
         ssl = SSL_new(ctx);
         SSL_set_fd(ssl, connection_fd);
 
-        // Establishing a TLS connection with the client acting as a server.
-        //  if (SSL_accept(ssl) <= 0) {
-        //     ERR_print_errors_fp(stderr);
-        // } else {
-        //     printf("(info) TLS established!\n");
-        //     memset(request, 0, BUFFER_MAX_SIZE);
-        //     SSL_read(ssl, request, BUFFER_MAX_SIZE);
-        //     //int total_bytes;
-        //     //request = read_data_from_ssl(ssl, &total_bytes);
-        //     printf("(info) Message received from client (size: %ld -
-        //     %d):\n%s",
-        //            strlen(request), 10, request);
-        // }
-
         if (do_tls_handshake(ssl, connection_fd, 1) == EXIT_FAILURE)
             goto end;
 
-        int total_bytes = 0;
-        char *request = read_data_from_ssl(ssl, &total_bytes);
-        printf("(info) Message received from client (size: %ld - %d):\n%s",
-               strlen(request), total_bytes, request);
+        bool end_connection = false;
+        char *request = read_data_from_ssl(ssl, &end_connection);
+        printf("(info) Message received from client (size: %ld):\n%s",
+               strlen(request), request);
 
         int readbytes;
-        char *response = createTLSConnectionWithChangedSNI(request, host, host,
-                                                           port, &readbytes);
+        // char *response = createTLSConnectionWithChangedSNI(request, host,
+        // host,
+        //                                                    port, &readbytes);
 
-        if (!SSL_write_ex(ssl, response, readbytes, &written)) {
-            printf("(error) Failed to write HTTP request\n");
-            exit(EXIT_FAILURE);
-        }
+        // if (!SSL_write_ex(ssl, response, readbytes, &written)) {
+        //     printf("(error) Failed to write HTTP request\n");
+        //     exit(EXIT_FAILURE);
+        // }
 
-        free(response);
+        // free(response);
         free(request);
 
         printf(
@@ -275,4 +253,81 @@ int create_server_TLS_connection() {
 
     close(server_fd);
     SSL_CTX_free(ctx);
+}
+
+int create_TLS_connection_with_user(SSL_CTX *ctx,
+                                    struct ssl_connection *ssl_connection,
+                                    int server_fd) {
+    struct sockaddr_in client_address;
+    unsigned int address_length = sizeof(client_address);
+    SSL *ssl;
+    char connect[BUFFER_MAX_SIZE];
+    size_t written; // readbytes;
+
+    int connection_fd =
+        accept(server_fd, (struct sockaddr *)&client_address, &address_length);
+
+    if (connection_fd < 0) {
+        if (errno != EWOULDBLOCK) {
+            printf("(error) Error in accept.");
+            exit(0);
+        }
+    }
+
+    // Set fd of the connection.
+    ssl_connection->user.fd = connection_fd;
+
+    printf("========================== BEGIN "
+           "===============================\n");
+    printf("Connection fd: %d\n", connection_fd);
+
+    // Read the request from the client.
+    int size = read(connection_fd, connect, CONNECT_MAX_SIZE);
+    if (size <= 0) {
+        printf("(error) Error reading user socket.\n");
+        return EXIT_FAILURE;
+    }
+
+    connect[size] = '\0';
+    printf("(info) Message:\n%s", connect);
+
+    // Set socket to non-block mode.
+    if (fcntl(connection_fd, F_SETFL, O_NONBLOCK) == -1) {
+        perror("Error setting socket to non-blocking mode");
+        close(connection_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the hostname and the port.
+    extractHost(connect, ssl_connection->hostname, ssl_connection->port);
+    strcpy(ssl_connection->sni, ssl_connection->hostname);
+
+    printf("(debug) CONNECT Host: %s / Port: %s\n", ssl_connection->hostname,
+           ssl_connection->port);
+
+    // Send a message stating that the connection has been established with
+    // the destination server.
+    char *proxy_response = DEFAULT_RESPONSE_TO_CLIENT;
+    ssize_t bytesSent =
+        write(connection_fd, proxy_response, strlen(proxy_response));
+    if (bytesSent < 0) {
+        perror("(error) Failed to send response to the client\n");
+        close(connection_fd);
+        exit(1);
+    }
+
+    printf("(debug) Message sent!\n");
+
+    // Create a new certificate with the hostname.
+    configure_context(ctx, ssl_connection->hostname);
+
+    // Create SSL connection with changed certificate.
+    ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, connection_fd);
+
+    if (do_tls_handshake(ssl, connection_fd, 1) == EXIT_FAILURE)
+        return EXIT_FAILURE;
+
+    ssl_connection->user.connection = ssl;
+    return EXIT_SUCCESS;
 }
