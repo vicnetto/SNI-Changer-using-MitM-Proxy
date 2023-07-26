@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "../buffer/buffer-reader.h"
+#include "tls-common.h"
 
 #ifndef BUFFER_MAX_SIZE
 #define BUFFER_MAX_SIZE 2048
@@ -144,12 +145,12 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
      * Create the underlying transport socket/BIO and associate it with the
      * connection.
      */
-    int clientFd = create_client_socket(hostname, port);
-    if (clientFd <= 0) {
+    int client_fd = create_client_socket(hostname, port);
+    if (client_fd <= 0) {
         printf("Failed to create the BIO\n");
         goto end;
     }
-    SSL_set_fd(ssl, clientFd);
+    SSL_set_fd(ssl, client_fd);
 
     /*
      * Tell the server during the handshake which hostname we are attempting
@@ -174,41 +175,13 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
     }
 
     fd_set read_fds;
-    int max_fd = clientFd + 1; // One more than the highest file descriptor
+    int max_fd = client_fd + 1; // One more than the highest file descriptor
     FD_ZERO(&read_fds);
-    FD_SET(clientFd, &read_fds);
+    FD_SET(client_fd, &read_fds);
 
+    printf("(debug) Attempt to handshake with %s...\n", hostname);
     /* Do the handshake with the server */
-    while (1) {
-        printf("(debug) Attempt to handshake with %s...\n", hostname);
-
-        int status = SSL_connect(ssl);
-        // Connection made successfully
-        if (status == 1)
-            break;
-
-        int decodedError = SSL_get_error(ssl, status);
-
-        // Error while creating the connection
-        if (decodedError == SSL_ERROR_WANT_READ) {
-            int result = select(max_fd, &read_fds, NULL, NULL, NULL);
-
-            if (result == -1) {
-                printf("Read-select error.\n");
-                goto end;
-            }
-        } else if (decodedError == SSL_ERROR_WANT_WRITE) {
-            int result = select(max_fd, NULL, &read_fds, NULL, NULL);
-
-            if (result == -1) {
-                printf("Write-select error.\n");
-                goto end;
-            }
-        } else {
-            printf("Error creating SSL connection.  err=%x\n", decodedError);
-            goto end;
-        }
-    }
+    do_tls_handshake(ssl, client_fd, 0);
 
     printf("(debug) Successful handshake!\n");
 
@@ -237,40 +210,8 @@ char *createTLSConnectionWithChangedSNI(char *message, const char *hostname,
      * Closing the connection. Try to close until connection returns a success
      * value.
      */
-    while (1) {
-        printf("Attempt shutdown connection with %s...\n", hostname);
-
-        int err = SSL_shutdown(ssl);
-        if (err == 1) {
-            break;
-        }
-
-        if (err == -1) {
-            int decodedError = SSL_get_error(ssl, err);
-
-            if (decodedError == SSL_ERROR_WANT_READ) {
-                int result = select(max_fd, &read_fds, NULL, NULL, NULL);
-                if (result == -1) {
-                    printf("(error) Read-select error while closing the "
-                           "connection with %s.\n",
-                           hostname);
-                    exit(-1);
-                }
-            } else if (decodedError == SSL_ERROR_WANT_WRITE) {
-                int result = select(max_fd, NULL, &read_fds, NULL, NULL);
-                if (result == -1) {
-                    printf("(error) Write-select error while closing the "
-                           "connection with %s.\n",
-                           hostname);
-                    exit(-1);
-                }
-            } else {
-                printf("(error) Error closing SSL connection.  err=%x\n",
-                       decodedError);
-                exit(-1);
-            }
-        }
-    }
+    printf("Attempt shutdown connection with %s...\n", hostname);
+    do_tls_shutdown(ssl, client_fd);
 
     printf("(info) Connection closed!\n");
 

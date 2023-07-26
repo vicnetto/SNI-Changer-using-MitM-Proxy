@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -6,16 +7,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "../buffer/buffer-reader.h"
 #include "../cert/cert.h"
 #include "tls-client.h"
+#include "tls-common.h"
+
+#define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
 
 #define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
 #define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
-#define BUFFER_MAX_SIZE 4096
+#define CONNECT_MAX_SIZE 4096
+#define BUFFER_MAX_SIZE 1024
+
+#define SERVER_PORT 8080
+
+struct ssl_connection {
+    SSL *client;
+    SSL *server;
+    char *host;
+    char *port;
+};
 
 /**
  * Configures the address of the socket.
@@ -40,34 +55,44 @@ void set_address(struct sockaddr_in *address, uint32_t ip, int port) {
  * @return int -> FD value of the socket.
  */
 int create_server_socket(struct sockaddr_in address, int port) {
-    int socketFd;
+    int server_fd;
 
     // Creates a new socket.
-    if ((socketFd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("(error) Failed to create socket.\n");
-        exit(1);
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("(error) Failed to create socket.\n");
+        exit(EXIT_FAILURE);
     }
 
     // Configures the socket to reuse address, for debbuging purporses.
     int option = 1;
-    setsockopt(socketFd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &option,
+                   sizeof(option))) {
+        printf("(error) Failed to set reusable configuration.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (fcntl(server_fd, F_SETFL, O_NONBLOCK) == -1) {
+        perror("(error) Error setting socket to non-blocking mode.\n");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
 
     // Bind the proxy socket to the proxy address
-    if (bind(socketFd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("(error) Failed to bind proxy socket\n");
-        exit(1);
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        printf("(error) Failed to bind proxy socket\n");
+        exit(EXIT_FAILURE);
     }
 
     // Listen for client connections
-    if (listen(socketFd, SOMAXCONN) < 0) {
-        perror("(error) Failed to listen for client connections\n");
-        exit(1);
+    if (listen(server_fd, SOMAXCONN) < 0) {
+        printf("(error) Failed to listen for client connections\n");
+        exit(EXIT_FAILURE);
     }
 
     printf("(info) Proxy server listening on port %d\n", port);
 
     // Returns the FD of the socket.
-    return socketFd;
+    return server_fd;
 }
 
 /*
@@ -121,11 +146,13 @@ void configure_context(SSL_CTX *ctx, char *hostname) {
     SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
 }
 
-void extractHost(char *source, char *host, char *port) {
+int extractHost(char *source, char *host, char *port) {
     if (sscanf(source, "CONNECT %99[^:]:%s", host, port) != 2) {
-        fprintf(stderr,
-                "Falha ao extrair o domínio e a porta da primeira linha.\n");
+        printf("(error) Failed to extract domain.\n");
+        return EXIT_FAILURE;
     }
+
+    return EXIT_SUCCESS;
 }
 
 int create_server_TLS_connection() {
@@ -136,7 +163,7 @@ int create_server_TLS_connection() {
 
     // Add the correct address to the tcp socket.
     struct sockaddr_in server_address;
-    set_address(&server_address, INADDR_ANY, 8080);
+    set_address(&server_address, INADDR_ANY, SERVER_PORT);
 
     // Create socket and returng the FD.
     int server_fd = create_server_socket(server_address, 8080);
@@ -145,39 +172,54 @@ int create_server_TLS_connection() {
         struct sockaddr_in client_address;
         unsigned int address_length = sizeof(client_address);
         SSL *ssl;
-        char buffer[BUFFER_MAX_SIZE];
+        char connect[BUFFER_MAX_SIZE];
         size_t written; // readbytes;
 
         // Connect to client when connection arrives.
-        int client_fd = accept(server_fd, (struct sockaddr *)&client_address,
-                               &address_length);
-        if (client_fd < 0) {
-            perror("(error) Unable to accept\n");
+        int connection_fd = -1;
+        do {
+            connection_fd = accept(
+                server_fd, (struct sockaddr *)&client_address, &address_length);
+
+            if (connection_fd < 0) {
+                if (errno != EWOULDBLOCK) {
+                    perror("  accept() failed");
+                    exit(0);
+                }
+            }
+
+            sleep(1);
+        } while (connection_fd == -1);
+
+        if (fcntl(connection_fd, F_SETFL, O_NONBLOCK) == -1) {
+            perror("Error setting socket to non-blocking mode");
+            close(connection_fd);
             exit(EXIT_FAILURE);
         }
 
         printf("========================== BEGIN "
                "===============================\n");
+        printf("Connection fd: %d\n", connection_fd);
 
         // Read the request from the client.
-        read(client_fd, buffer, BUFFER_MAX_SIZE);
-        printf("(info) Message:\n%s", buffer);
+        read(connection_fd, connect, CONNECT_MAX_SIZE);
+        printf("(info) Message:\n%s", connect);
 
         // Get the hostname and the port.
         char host[BUFFER_MAX_SIZE];
         char port[5];
-        extractHost(buffer, host, port);
+        extractHost(connect, host, port);
 
         printf("(debug) CONNECT Host: %s / Port: %s\n", host, port);
 
         // Send a message stating that the connection has been established with
         // the destination server.
-        char *proxy_response = "HTTP/1.1 200 OK\r\n\r\n";
+        char *proxy_response = DEFAULT_RESPONSE_TO_CLIENT;
         ssize_t bytesSent =
-            write(client_fd, proxy_response, strlen(proxy_response));
+            write(connection_fd, proxy_response, strlen(proxy_response));
         if (bytesSent < 0) {
             perror("(error) Failed to send response to the client\n");
-            close(client_fd);
+            close(connection_fd);
             exit(1);
         }
 
@@ -186,24 +228,32 @@ int create_server_TLS_connection() {
         configure_context(ctx, host);
 
         ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client_fd);
+        SSL_set_fd(ssl, connection_fd);
 
         // Establishing a TLS connection with the client acting as a server.
-        if (SSL_accept(ssl) <= 0) {
-            ERR_print_errors_fp(stderr);
-        } else {
-            printf("(info) TLS established!\n");
-            memset(buffer, 0, BUFFER_MAX_SIZE);
-            SSL_read(ssl, buffer, BUFFER_MAX_SIZE);
-            // int total_bytes;
-            // char *testando;
-            // testando = read_data_from_ssl(ssl, &total_bytes);
-            printf("(info) Message received from client (size: %ld):\n%s",
-                   strlen(buffer), buffer);
-        }
+        //  if (SSL_accept(ssl) <= 0) {
+        //     ERR_print_errors_fp(stderr);
+        // } else {
+        //     printf("(info) TLS established!\n");
+        //     memset(request, 0, BUFFER_MAX_SIZE);
+        //     SSL_read(ssl, request, BUFFER_MAX_SIZE);
+        //     //int total_bytes;
+        //     //request = read_data_from_ssl(ssl, &total_bytes);
+        //     printf("(info) Message received from client (size: %ld -
+        //     %d):\n%s",
+        //            strlen(request), 10, request);
+        // }
+
+        if (do_tls_handshake(ssl, connection_fd, 1) == EXIT_FAILURE)
+            goto end;
+
+        int total_bytes = 0;
+        char *request = read_data_from_ssl(ssl, &total_bytes);
+        printf("(info) Message received from client (size: %ld - %d):\n%s",
+               strlen(request), total_bytes, request);
 
         int readbytes;
-        char *response = createTLSConnectionWithChangedSNI(buffer, host, host,
+        char *response = createTLSConnectionWithChangedSNI(request, host, host,
                                                            port, &readbytes);
 
         if (!SSL_write_ex(ssl, response, readbytes, &written)) {
@@ -212,13 +262,15 @@ int create_server_TLS_connection() {
         }
 
         free(response);
+        free(request);
 
         printf(
             "========================== END ===============================\n");
 
-        SSL_shutdown(ssl);
+    end:
+        do_tls_shutdown(ssl, connection_fd);
         SSL_free(ssl);
-        close(client_fd);
+        close(connection_fd);
     }
 
     close(server_fd);
