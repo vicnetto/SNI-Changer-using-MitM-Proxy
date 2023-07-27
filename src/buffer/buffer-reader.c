@@ -1,7 +1,9 @@
 #include <errno.h>
+#include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -50,7 +52,12 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
         read_bytes = SSL_read(ssl, read_buffer, READER_BUFFER_SIZE);
         read_buffer[read_bytes] = '\0';
 
-        if (read_bytes < 0) {
+        if (read_bytes <= 0) {
+            if (read_bytes == 0) {
+                *end_connection = true;
+                return body;
+            }
+
             if (!has_done_reading)
                 continue;
 
@@ -88,11 +95,6 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
             total_bytes += read_bytes;
         }
     } while (retry_read != MAX_RETRIES);
-
-    if (read_buffer[0] == '0') {
-        if (read_buffer[0] == '0' && read_bytes == -1)
-            *end_connection = true;
-    }
 
     body = (char *)realloc(body, total_bytes + 1);
     body[total_bytes + 1] = '\0';
