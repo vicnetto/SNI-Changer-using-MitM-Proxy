@@ -7,6 +7,7 @@
 #include <openssl/err.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,8 +135,16 @@ void clean_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
     memset(ssl_connection->port, 0, PORT_MAX_SIZE);
 }
 
-void free_and_clean_all_SSL_connections(struct ssl_connection *ssl_connection) {
-    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+void free_and_clean_SSL_connection(struct ssl_connection *ssl_connection) {
+    free_data_in_SSL_connection(ssl_connection);
+    clean_data_in_SSL_connection(ssl_connection);
+}
+
+void free_and_clean_all_SSL_connections(struct ssl_connection *ssl_connection, int is_first_part) {
+    int begin = is_first_part ? 0 : MAX_CONNECTIONS / 2;
+    int end = is_first_part ? MAX_CONNECTIONS / 2 : MAX_CONNECTIONS;
+
+    for (int i = begin; i < end; i++) {
         free_data_in_SSL_connection(&ssl_connection[i]);
         clean_data_in_SSL_connection(&ssl_connection[i]);
     }
@@ -163,6 +172,8 @@ int main(int argc, char *argv[]) {
         clean_data_in_SSL_connection(&ssl_connections[i]);
     }
 
+    bool is_first_part = true;
+
     while (1) {
         FD_ZERO(&read_fds);
         FD_SET(server_fd, &read_fds);
@@ -182,73 +193,87 @@ int main(int argc, char *argv[]) {
                 find_empty_position_in_ssl_connection_list(ssl_connections);
             printf("(info) Empty position: %d\n", empty_position);
 
-            // Create TLS with user and host.
-            create_TLS_connection_with_user(
-                ctx, &ssl_connections[empty_position], server_fd);
-            create_TLS_connection_with_host_with_changed_SNI(
-                ctx, &ssl_connections[empty_position]);
+            if (empty_position == -1) {
+                free_and_clean_all_SSL_connections(ssl_connections, is_first_part);
+                is_first_part = !is_first_part;
+                empty_position =
+                find_empty_position_in_ssl_connection_list(ssl_connections);
+            }
 
-            continue;
+            // Create TLS with user and host.
+            if (create_TLS_connection_with_user(
+                    ctx, &ssl_connections[empty_position], server_fd) ==
+                EXIT_FAILURE) {
+                free_and_clean_SSL_connection(&ssl_connections[empty_position]);
+                continue;
+            }
+
+            if (create_TLS_connection_with_host_with_changed_SNI(
+                    ctx, &ssl_connections[empty_position]) == EXIT_FAILURE) {
+                free_and_clean_SSL_connection(&ssl_connections[empty_position]);
+                continue;
+            }
         }
 
         // Read all sockets to see if message has arrived.
         int current_user_fd, current_host_fd;
-        for (int i = 0; i < max_fd; i++) {
+        for (int i = 0; i < MAX_CONNECTIONS; i++) {
             current_user_fd = ssl_connections[i].user.fd;
             current_host_fd = ssl_connections[i].host.fd;
 
             // Verify if any request was sent by the user.
             if (FD_ISSET(current_user_fd, &read_fds)) {
+                int total_bytes;
                 bool end_connection = false;
-                char *request_body = read_data_from_ssl(
-                    ssl_connections[i].user.connection, &end_connection);
+                char *request_body =
+                    read_data_from_ssl(ssl_connections[i].user.connection,
+                                       &end_connection, &total_bytes);
 
                 if (end_connection) {
                     printf(
                         "\n(info) Connection closed with %s and socket %d!\n",
                         ssl_connections[i].hostname, current_user_fd);
 
-                    free_data_in_SSL_connection(&ssl_connections[i]);
-                    clean_data_in_SSL_connection(&ssl_connections[i]);
+                    free_and_clean_SSL_connection(&ssl_connections[i]);
+                    break;
                 } else {
                     write_data_in_ssl(ssl_connections[i].host.connection,
-                                      request_body);
+                                      request_body, total_bytes);
                     printf("(debug) Message sent:\n%s\n", request_body);
                 }
 
                 free(request_body);
+                continue;
             }
 
             // Verify if any response was sent by the host.
             if (FD_ISSET(current_host_fd, &read_fds)) {
+                int total_bytes = 0;
                 bool end_connection = false;
-                //char *response_body = read_data_from_ssl(
-                //    ssl_connections[i].host.connection, &end_connection);
-                char *response_body = "";
-                char buffer[10000];
-                int test = SSL_read(ssl_connections[i].host.connection, buffer, 10000);
-                printf("(info) Message:\n%s\n", buffer);
-                test = SSL_read(ssl_connections[i].host.connection, buffer, 10000);
-                printf("(info) Message:\n%s\n", buffer);
+                char *response_body =
+                    read_data_from_ssl(ssl_connections[i].host.connection,
+                                       &end_connection, &total_bytes);
 
                 if (end_connection) {
                     printf("(info) Connection closed with %s and socket %d\n",
                            ssl_connections[i].hostname, current_host_fd);
 
-                    free_data_in_SSL_connection(&ssl_connections[i]);
-                    clean_data_in_SSL_connection(&ssl_connections[i]);
+                    free_and_clean_SSL_connection(&ssl_connections[i]);
+                    break;
                 } else {
                     write_data_in_ssl(ssl_connections[i].user.connection,
-                                      response_body);
+                                      response_body, total_bytes);
                     printf("(debug) Response:\n%s\n", response_body);
                 }
 
                 free(response_body);
+                continue;
             }
         }
     }
 
-    free_and_clean_all_SSL_connections(ssl_connections);
+    free_and_clean_all_SSL_connections(ssl_connections, true);
+    free_and_clean_all_SSL_connections(ssl_connections, false);
 
     return 0;
 }
