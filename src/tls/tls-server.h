@@ -6,7 +6,6 @@
 
 void set_address(struct sockaddr_in *address, uint32_t ip, int port);
 int create_server_socket(struct sockaddr_in address, int port);
-int create_server_TLS_connection();
 int create_TLS_connection_with_user(SSL_CTX *ctx,
                                     struct ssl_connection *ssl_connection,
                                     int server_fd);

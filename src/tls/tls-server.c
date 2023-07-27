@@ -146,115 +146,6 @@ int extractHost(char *source, char *host, char *port) {
     return EXIT_SUCCESS;
 }
 
-int create_server_TLS_connection() {
-    /* Ignore broken pipe signals */
-    signal(SIGPIPE, SIG_IGN);
-
-    SSL_CTX *ctx = create_context();
-
-    // Add the correct address to the tcp socket.
-    struct sockaddr_in server_address;
-    set_address(&server_address, INADDR_ANY, SERVER_PORT);
-
-    // Create socket and returng the FD.
-    int server_fd = create_server_socket(server_address, 8080);
-
-    while (1) {
-        struct sockaddr_in client_address;
-        unsigned int address_length = sizeof(client_address);
-        SSL *ssl;
-        char connect[BUFFER_MAX_SIZE];
-        size_t written; // readbytes;
-
-        // Connect to client when connection arrives.
-        int connection_fd = -1;
-        do {
-            connection_fd = accept(
-                server_fd, (struct sockaddr *)&client_address, &address_length);
-
-            if (connection_fd < 0) {
-                if (errno != EWOULDBLOCK) {
-                    perror("  accept() failed");
-                    exit(0);
-                }
-            }
-
-            sleep(1);
-        } while (connection_fd == -1);
-
-        if (fcntl(connection_fd, F_SETFL, O_NONBLOCK) == -1) {
-            perror("Error setting socket to non-blocking mode");
-            close(connection_fd);
-            exit(EXIT_FAILURE);
-        }
-
-        printf("========================== BEGIN "
-               "===============================\n");
-        printf("Connection fd: %d\n", connection_fd);
-
-        // Read the request from the client.
-        read(connection_fd, connect, CONNECT_MAX_SIZE);
-        printf("(info) Message:\n%s", connect);
-
-        // Get the hostname and the port.
-        char host[DOMAIN_MAX_SIZE];
-        char port[PORT_MAX_SIZE];
-        extractHost(connect, host, port);
-
-        printf("(debug) CONNECT Host: %s / Port: %s\n", host, port);
-
-        // Send a message stating that the connection has been established with
-        // the destination server.
-        char *proxy_response = DEFAULT_RESPONSE_TO_CLIENT;
-        ssize_t bytesSent =
-            write(connection_fd, proxy_response, strlen(proxy_response));
-        if (bytesSent < 0) {
-            perror("(error) Failed to send response to the client\n");
-            close(connection_fd);
-            exit(1);
-        }
-
-        printf("(debug) Message sent!\n");
-
-        configure_context(ctx, host);
-
-        ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, connection_fd);
-
-        if (do_tls_handshake(ssl, connection_fd, 1) == EXIT_FAILURE)
-            goto end;
-
-        bool end_connection = false;
-        char *request = read_data_from_ssl(ssl, &end_connection);
-        printf("(info) Message received from client (size: %ld):\n%s",
-               strlen(request), request);
-
-        int readbytes;
-        // char *response = createTLSConnectionWithChangedSNI(request, host,
-        // host,
-        //                                                    port, &readbytes);
-
-        // if (!SSL_write_ex(ssl, response, readbytes, &written)) {
-        //     printf("(error) Failed to write HTTP request\n");
-        //     exit(EXIT_FAILURE);
-        // }
-
-        // free(response);
-        free(request);
-
-        printf(
-            "========================== END ===============================\n");
-
-    end:
-        do_tls_shutdown(ssl, connection_fd);
-        SSL_free(ssl);
-        close(connection_fd);
-    }
-
-    close(server_fd);
-    SSL_CTX_free(ctx);
-}
-
 int create_TLS_connection_with_user(SSL_CTX *ctx,
                                     struct ssl_connection *ssl_connection,
                                     int server_fd) {
@@ -276,6 +167,21 @@ int create_TLS_connection_with_user(SSL_CTX *ctx,
 
     // Set fd of the connection.
     ssl_connection->user.fd = connection_fd;
+
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(connection_fd, &read_fds);
+    int max_fd = server_fd;
+
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 10;
+
+    int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
+    if (status == 0) {
+        printf("(error) Read timed out .\n");
+        return EXIT_FAILURE;
+    }
 
     printf("========================== BEGIN "
            "===============================\n");
