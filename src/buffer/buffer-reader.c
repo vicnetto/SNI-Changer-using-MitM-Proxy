@@ -39,8 +39,8 @@ static int m_sleep(long m_sec) {
     return res;
 }
 
-char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
-    int total_bytes = 0;
+char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
+    *total_bytes = 0;
     int read_bytes;
     bool has_done_reading = false;
     int current_allocation_size_for_response = FULL_BUFFER_SIZE;
@@ -54,6 +54,9 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
 
         if (read_bytes <= 0) {
             if (read_bytes == 0) {
+                if (*total_bytes != 0)
+                    return body;
+
                 *end_connection = true;
                 return body;
             }
@@ -83,30 +86,30 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection) {
             retry_read = 0;
 
             if (current_allocation_size_for_response - READER_BUFFER_SIZE >=
-                total_bytes)
-                memcpy(body + total_bytes, read_buffer, read_bytes);
+                *total_bytes)
+                memcpy(body + *total_bytes, read_buffer, read_bytes);
             else {
                 current_allocation_size_for_response *= 2;
                 body = (char *)realloc(
                     body, current_allocation_size_for_response + 1);
-                memcpy(body + total_bytes, read_buffer, read_bytes);
+                memcpy(body + *total_bytes, read_buffer, read_bytes);
             }
 
-            total_bytes += read_bytes;
+            *total_bytes += read_bytes;
         }
     } while (retry_read != MAX_RETRIES);
 
-    body = (char *)realloc(body, total_bytes + 1);
-    body[total_bytes + 1] = '\0';
+    body = (char *)realloc(body, *total_bytes + 1);
+    body[*total_bytes + 1] = '\0';
 
     return body;
 }
 
-int write_data_in_ssl(SSL *ssl, char *message) {
+int write_data_in_ssl(SSL *ssl, char *message, int total_bytes) {
 
     size_t written;
 
-    if (!SSL_write_ex(ssl, message, strlen(message), &written)) {
+    if (!SSL_write_ex(ssl, message, total_bytes, &written)) {
         printf("(error) Failed to write HTTP request.\n");
 
         int status = SSL_get_error(ssl, written);
