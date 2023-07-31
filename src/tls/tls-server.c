@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <linux/limits.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -17,8 +18,8 @@
 
 #define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
 
-#define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
-#define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
+#define ROOT_CA_CERTIFICATE_LOCATION "cert/rootCA.pem"
+#define ROOT_CA_KEY_LOCATION "cert/rootCA.key"
 #define CONNECT_MAX_SIZE 4096
 
 #define SERVER_PORT 8080
@@ -146,9 +147,33 @@ int extractHost(char *source, char *host, char *port) {
     return EXIT_SUCCESS;
 }
 
+int search_for_connection_with_given_hostname(
+    struct ssl_connection *ssl_connections,
+    struct ssl_connection *new_connection, int max_connections) {
+
+    for (int i = 0; i < max_connections; i++) {
+        struct ssl_connection current_connection = ssl_connections[i];
+
+        if (!strcmp(new_connection->hostname, current_connection.hostname) &&
+            new_connection->user.fd != current_connection.user.fd) {
+
+            new_connection->host.fd = current_connection.host.fd;
+            new_connection->host.connection =
+                current_connection.host.connection;
+
+            printf("(info) Using already created connection.\n");
+
+            break;
+        }
+    }
+
+    return 0;
+}
+
 int create_TLS_connection_with_user(SSL_CTX *ctx,
+                                    struct ssl_connection *ssl_connections,
                                     struct ssl_connection *ssl_connection,
-                                    int server_fd) {
+                                    int max_connections, int server_fd) {
     struct sockaddr_in client_address;
     unsigned int address_length = sizeof(client_address);
     SSL *ssl;
@@ -235,5 +260,9 @@ int create_TLS_connection_with_user(SSL_CTX *ctx,
         return EXIT_FAILURE;
 
     ssl_connection->user.connection = ssl;
+
+    search_for_connection_with_given_hostname(ssl_connections, ssl_connection,
+                                              max_connections);
+
     return EXIT_SUCCESS;
 }

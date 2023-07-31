@@ -109,18 +109,21 @@ int find_empty_position_in_ssl_connection_list(
     return -1;
 }
 
-void free_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
+void free_data_in_SSL_connection(struct ssl_connection *ssl_connection,
+                                 bool clean_host) {
+    if (clean_host) {
+        if (ssl_connection->host.connection != NULL)
+            SSL_free(ssl_connection->host.connection);
+
+        if (ssl_connection->host.fd != 0)
+            close(ssl_connection->host.fd);
+    }
+
     if (ssl_connection->user.connection != NULL)
         SSL_free(ssl_connection->user.connection);
 
-    if (ssl_connection->host.connection != NULL)
-        SSL_free(ssl_connection->host.connection);
-
     if (ssl_connection->user.fd != 0)
         close(ssl_connection->user.fd);
-
-    if (ssl_connection->host.fd != 0)
-        close(ssl_connection->host.fd);
 }
 
 void clean_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
@@ -136,16 +139,51 @@ void clean_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
 }
 
 void free_and_clean_SSL_connection(struct ssl_connection *ssl_connection) {
-    free_data_in_SSL_connection(ssl_connection);
+    free_data_in_SSL_connection(ssl_connection, true);
     clean_data_in_SSL_connection(ssl_connection);
 }
 
-void free_and_clean_all_SSL_connections(struct ssl_connection *ssl_connection, int is_first_part) {
+void close_SSL_connection(SSL_CTX *ctx, struct ssl_connection *ssl_connections,
+                          int position) {
+    printf("(info) Trying to close connection.\n");
+    struct ssl_connection *connection = &ssl_connections[position];
+    int new_fd = 0;
+    SSL *new_ssl = NULL;
+    bool only_using_this_ssl_host = true;
+
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        struct ssl_connection *current_connection = &ssl_connections[i];
+
+        if (current_connection->user.fd == connection->user.fd)
+            continue;
+
+        if (current_connection->host.fd == connection->host.fd) {
+            if (only_using_this_ssl_host) {
+                only_using_this_ssl_host = false;
+                create_TLS_connection_with_host_with_changed_SNI(
+                    ctx, current_connection);
+                new_ssl = current_connection->host.connection;
+                new_fd = current_connection->host.fd;
+            } else {
+                current_connection->host.fd = new_fd;
+                current_connection->host.connection = new_ssl;
+            }
+        }
+    }
+
+    free_data_in_SSL_connection(connection, true);
+    clean_data_in_SSL_connection(connection);
+
+    printf("(info) Fechadas.\n");
+}
+
+void free_and_clean_all_SSL_connections(struct ssl_connection *ssl_connection,
+                                        int is_first_part) {
     int begin = is_first_part ? 0 : MAX_CONNECTIONS / 2;
     int end = is_first_part ? MAX_CONNECTIONS / 2 : MAX_CONNECTIONS;
 
     for (int i = begin; i < end; i++) {
-        free_data_in_SSL_connection(&ssl_connection[i]);
+        free_data_in_SSL_connection(&ssl_connection[i], true);
         clean_data_in_SSL_connection(&ssl_connection[i]);
     }
 }
@@ -194,24 +232,29 @@ int main(int argc, char *argv[]) {
             printf("(info) Empty position: %d\n", empty_position);
 
             if (empty_position == -1) {
-                free_and_clean_all_SSL_connections(ssl_connections, is_first_part);
+                free_and_clean_all_SSL_connections(ssl_connections,
+                                                   is_first_part);
                 is_first_part = !is_first_part;
                 empty_position =
-                find_empty_position_in_ssl_connection_list(ssl_connections);
+                    find_empty_position_in_ssl_connection_list(ssl_connections);
             }
 
             // Create TLS with user and host.
             if (create_TLS_connection_with_user(
-                    ctx, &ssl_connections[empty_position], server_fd) ==
-                EXIT_FAILURE) {
+                    ctx, ssl_connections, &ssl_connections[empty_position],
+                    MAX_CONNECTIONS, server_fd) == EXIT_FAILURE) {
                 free_and_clean_SSL_connection(&ssl_connections[empty_position]);
                 continue;
             }
 
-            if (create_TLS_connection_with_host_with_changed_SNI(
-                    ctx, &ssl_connections[empty_position]) == EXIT_FAILURE) {
-                free_and_clean_SSL_connection(&ssl_connections[empty_position]);
-                continue;
+            if (ssl_connections[empty_position].host.fd == 0) {
+                if (create_TLS_connection_with_host_with_changed_SNI(
+                        ctx, &ssl_connections[empty_position]) ==
+                    EXIT_FAILURE) {
+                    free_and_clean_SSL_connection(
+                        &ssl_connections[empty_position]);
+                    continue;
+                }
             }
         }
 
@@ -234,7 +277,8 @@ int main(int argc, char *argv[]) {
                         "\n(info) Connection closed with %s and socket %d!\n",
                         ssl_connections[i].hostname, current_user_fd);
 
-                    free_and_clean_SSL_connection(&ssl_connections[i]);
+                    // free_and_clean_SSL_connection(&ssl_connections[i]);
+                    close_SSL_connection(ctx, ssl_connections, i);
                     break;
                 } else {
                     write_data_in_ssl(ssl_connections[i].host.connection,
@@ -258,7 +302,11 @@ int main(int argc, char *argv[]) {
                     printf("(info) Connection closed with %s and socket %d\n",
                            ssl_connections[i].hostname, current_host_fd);
 
-                    free_and_clean_SSL_connection(&ssl_connections[i]);
+                    // free_and_clean_SSL_connection(&ssl_connections[i]);
+                    // close_SSL_connections(ssl_connections,
+                    // &ssl_connections[i],
+                    //                      false);
+                    close_SSL_connection(ctx, ssl_connections, i);
                     break;
                 } else {
                     write_data_in_ssl(ssl_connections[i].user.connection,

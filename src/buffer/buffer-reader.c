@@ -47,6 +47,7 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
     char read_buffer[READER_BUFFER_SIZE + 1];
     char *body = (char *)malloc(current_allocation_size_for_response);
     int retry_read = 0;
+    int retry_end = 0;
 
     do {
         read_bytes = SSL_read(ssl, read_buffer, READER_BUFFER_SIZE);
@@ -61,8 +62,14 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
                 return body;
             }
 
-            if (!has_done_reading)
-                continue;
+            if (!has_done_reading) {
+                retry_end++;
+                m_sleep(10);
+                if (retry_end == 10) {
+                    *end_connection = true;
+                    return body;
+                }
+            }
 
             int err = SSL_get_error(ssl, read_bytes);
             if (err == SSL_ERROR_WANT_READ) {
