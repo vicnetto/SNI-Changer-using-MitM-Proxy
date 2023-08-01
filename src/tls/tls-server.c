@@ -17,8 +17,8 @@
 
 #define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
 
-#define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
-#define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
+#define ROOT_CA_CERTIFICATE_LOCATION "cert/rootCA.pem"
+#define ROOT_CA_KEY_LOCATION "cert/rootCA.key"
 #define CONNECT_MAX_SIZE 4096
 
 #define SERVER_PORT 8080
@@ -168,20 +168,20 @@ int create_TLS_connection_with_user(SSL_CTX *ctx,
     // Set fd of the connection.
     ssl_connection->user.fd = connection_fd;
 
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(connection_fd, &read_fds);
-    int max_fd = server_fd;
+    // fd_set read_fds;
+    // FD_ZERO(&read_fds);
+    // FD_SET(connection_fd, &read_fds);
+    // int max_fd = server_fd;
 
-    struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 10;
+    // struct timeval timeout;
+    // timeout.tv_sec = 0;
+    // timeout.tv_usec = 10;
 
-    int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
-    if (status == 0) {
-        printf("(error) Read timed out .\n");
-        return EXIT_FAILURE;
-    }
+    // int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
+    // if (status == 0) {
+    //     printf("(error) Read timed out .\n");
+    //     return EXIT_FAILURE;
+    // }
 
     printf("========================== BEGIN "
            "===============================\n");
