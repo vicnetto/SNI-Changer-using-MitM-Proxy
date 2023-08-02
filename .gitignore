@@ -6,3 +6,6 @@ ssl-tls-proxy
 
 # C formatter lazyvim
 .clang-format
+
+# CLION file
+.idea
