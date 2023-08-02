@@ -33,7 +33,7 @@ static int create_client_socket(const char *hostname, const char *port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == -1) {
         perror("Error creating socket");
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     int option = 1;
@@ -42,14 +42,14 @@ static int create_client_socket(const char *hostname, const char *port) {
     if (fcntl(sock, F_SETFL, O_NONBLOCK) == -1) {
         perror("Error setting socket to non-blocking mode");
         close(sock);
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     struct hostent *server = gethostbyname(hostname);
     if (server == NULL) {
         fprintf(stderr, "Error: Could not resolve hostname\n");
         close(sock);
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     memset(&serveraddr, 0, sizeof(serveraddr));
@@ -62,7 +62,7 @@ static int create_client_socket(const char *hostname, const char *port) {
         if (errno != EINPROGRESS) {
             perror("Error connecting to server");
             close(sock);
-            exit(EXIT_FAILURE);
+            return -1;
         }
     }
 
@@ -134,7 +134,7 @@ int create_TLS_connection_with_host_with_changed_SNI(
     int client_fd =
         create_client_socket(ssl_connection->hostname, ssl_connection->port);
     if (client_fd <= 0) {
-        printf("Failed to create the BIO\n");
+        printf("(error) Failed to create the socket\n");
         return EXIT_FAILURE;
     }
     SSL_set_fd(ssl_connection->host.connection, client_fd);

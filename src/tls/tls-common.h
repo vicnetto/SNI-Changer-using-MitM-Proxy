@@ -3,7 +3,6 @@
 #include <openssl/ssl.h>
 
 #define BUFFER_MAX_SIZE 1024
-
 #define DOMAIN_MAX_SIZE 100
 #define PORT_MAX_SIZE 5
 
