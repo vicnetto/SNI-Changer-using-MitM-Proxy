@@ -2,17 +2,16 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 #include "buffer-reader.h"
 
 #define FULL_BUFFER_SIZE 1024
 #define READER_BUFFER_SIZE 160
 #define SLEEP_TIME 10
-#define MAX_RETRIES 3
+#define MAX_RETRIES_TO_START_READING 10
+#define MAX_RETRIES_TO_STOP_READING 3
 
 /*
  * Sleep for m_sec miliseconds.
@@ -39,51 +38,52 @@ static int m_sleep(long m_sec) {
     return res;
 }
 
-char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
-    *total_bytes = 0;
-    int read_bytes;
-    bool has_done_reading = false;
+char *read_data_from_ssl(SSL *ssl, int *total_bytes) {
+    bool first_reading_done = false;
+    int attempts_after_end_message = 0;
+    int attempts_to_get_first_message = 0;
     int current_allocation_size_for_response = FULL_BUFFER_SIZE;
+    *total_bytes = 0;
+    int read_bytes = 0;
+
     char read_buffer[READER_BUFFER_SIZE + 1];
     char *body = (char *)malloc(current_allocation_size_for_response);
-    int retry_read = 0;
 
     do {
         read_bytes = SSL_read(ssl, read_buffer, READER_BUFFER_SIZE);
         read_buffer[read_bytes] = '\0';
 
         if (read_bytes <= 0) {
-            if (read_bytes == 0) {
-                if (*total_bytes != 0)
+            if (!first_reading_done) {
+                attempts_to_get_first_message++;
+                m_sleep(SLEEP_TIME);
+
+                if (attempts_to_get_first_message ==
+                    MAX_RETRIES_TO_START_READING)
                     return body;
 
-                *end_connection = true;
-                return body;
-            }
-
-            if (!has_done_reading)
                 continue;
+            }
 
             int err = SSL_get_error(ssl, read_bytes);
             if (err == SSL_ERROR_WANT_READ) {
-                retry_read++;
+                attempts_after_end_message++;
                 m_sleep(SLEEP_TIME);
 
-                if (retry_read == MAX_RETRIES)
+                if (attempts_after_end_message == MAX_RETRIES_TO_STOP_READING)
                     break;
-            }
-            if (err == SSL_ERROR_WANT_WRITE) {
+            } else if (err == SSL_ERROR_WANT_WRITE) {
                 printf("\n(error) Want_write in read function!\n");
+                exit(0);
                 break;
-            }
-            if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL ||
-                err == SSL_ERROR_SSL) {
+            } else if (err == SSL_ERROR_ZERO_RETURN ||
+                       err == SSL_ERROR_SYSCALL || err == SSL_ERROR_SSL) {
                 printf("\n(error) ZERO_RETURN - ERROR in read function!\n");
                 break;
             }
         } else {
-            has_done_reading = true;
-            retry_read = 0;
+            first_reading_done = true;
+            attempts_after_end_message = 0;
 
             if (current_allocation_size_for_response - READER_BUFFER_SIZE >=
                 *total_bytes)
@@ -97,7 +97,7 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
 
             *total_bytes += read_bytes;
         }
-    } while (retry_read != MAX_RETRIES);
+    } while (attempts_after_end_message != MAX_RETRIES_TO_STOP_READING);
 
     body = (char *)realloc(body, *total_bytes + 1);
     body[*total_bytes + 1] = '\0';
