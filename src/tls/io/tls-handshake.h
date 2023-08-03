@@ -19,7 +19,6 @@ struct ssl_connection {
     char port[PORT_MAX_SIZE];
 };
 
-SSL_CTX *create_ssl_context();
 int do_tls_handshake(SSL *ssl, int fd, bool is_server);
 void clean_SSL_connection(struct ssl_connection *ssl_connection,
                           bool should_free);

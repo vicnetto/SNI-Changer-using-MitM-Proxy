@@ -1,33 +1,10 @@
-#include "tls-common.h"
+#include "tls-handshake.h"
 
 #include <openssl/err.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-
-/**
- * Creates factory of SSL connections, specifying that we want to create
- * TLS servers.
- *
- * @return SSL_CTX -> Created context.
- */
-SSL_CTX *create_ssl_context() {
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    // Specify method.
-    method = TLS_server_method();
-
-    ctx = SSL_CTX_new(method);
-    if (!ctx) {
-        perror("(error) Unable to create SSL context\n");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
 
 /**
  * Do SSL handshake with data received in the socket.

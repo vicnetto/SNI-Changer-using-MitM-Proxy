@@ -1,9 +1,9 @@
 #ifndef TLS_CLIENT_H
 #define TLS_CLIENT_H
 
-#ifndef INCLUDE_TLS_COMMON_H
-#define INCLUDE_TLS_COMMON_H
-#include "tls-common.h"
+#ifndef INCLUDE_TLS_HANDSHAKE_H
+#define INCLUDE_TLS_HANDSHAKE_H
+#include "tls-handshake.h"
 #endif
 
 #include <openssl/ssl.h>
