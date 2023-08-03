@@ -1,82 +1,120 @@
-#include <openssl/ssl.h>
-#include <stdlib.h>
+#include "tls-common.h"
 
-int do_tls_handshake(SSL *ssl, int fd, int type) {
+#include <openssl/err.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+/**
+ * Creates factory of SSL connections, specifying that we want to create
+ * TLS servers.
+ *
+ * @return SSL_CTX -> Created context.
+ */
+SSL_CTX *create_ssl_context() {
+    const SSL_METHOD *method;
+    SSL_CTX *ctx;
+
+    // Specify method.
+    method = TLS_server_method();
+
+    ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        perror("(error) Unable to create SSL context\n");
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    return ctx;
+}
+
+/**
+ * Do SSL handshake with data received in the socket.
+ *
+ * Assumes that non-blocking sockets are being used.
+ *
+ * @param ssl -> SSL connection.
+ * @param fd -> FD of the socket.
+ * @param is_server -> 1 if it is a server, 0 if client.
+ * @return -> 1 if success, 0 otherwise.
+ */
+int do_tls_handshake(SSL *ssl, int fd, bool is_server) {
 
     fd_set read_fds;
-    int max_fd = fd + 1; // One more than the highest file descriptor
+    int max_fd = fd + 1;
     FD_ZERO(&read_fds);
     FD_SET(fd, &read_fds);
 
+    // As non-blocking sockets are being used, a while loop is mandatory to call
+    // the function until a success/error is returned.
     while (1) {
-        int status = type == 0 ? SSL_connect(ssl) : SSL_accept(ssl);
+        int status = is_server ? SSL_accept(ssl) : SSL_connect(ssl);
+
         // Connection made successfully
         if (status == 1)
             break;
 
         int decodedError = SSL_get_error(ssl, status);
 
-        // Error while creating the connection
+        // Error while creating the connection.
         if (decodedError == SSL_ERROR_WANT_READ) {
             int result = select(max_fd, &read_fds, NULL, NULL, NULL);
 
             if (result == -1) {
                 printf("Read-select error.\n");
-                return EXIT_FAILURE;
+                return -1;
             }
         } else if (decodedError == SSL_ERROR_WANT_WRITE) {
             int result = select(max_fd, NULL, &read_fds, NULL, NULL);
 
             if (result == -1) {
                 printf("Write-select error.\n");
-                return EXIT_FAILURE;
+                return -1;
             }
         } else {
             printf("Error creating SSL connection.  err=%x\n", decodedError);
-            return EXIT_FAILURE;
+            return -1;
         }
     }
-    return EXIT_SUCCESS;
+
+    return 0;
 }
 
-int do_tls_shutdown(SSL *ssl, int fd) {
-    fd_set read_fds;
-    int max_fd = fd + 1; // One more than the highest file descriptor
-    FD_ZERO(&read_fds);
-    FD_SET(fd, &read_fds);
+/**
+ * Clean and free a struct ssl_connection.
+ *
+ * @param ssl_connection -> struct ssl_connection to be cleaned.
+ * @param should_free -> should free and close sockets or not.
+ */
+void clean_SSL_connection(struct ssl_connection *ssl_connection,
+                          bool should_free) {
+    if (should_free) {
+        printf("(info) Connection closed (user-fd/host-fd[hostname]: "
+               "%d/%d[%s]).\n",
+               ssl_connection->user.fd, ssl_connection->host.fd,
+               ssl_connection->hostname);
 
-    /*
-     * Closing the connection. Try to close until connection returns a success
-     * value.
-     */
-    while (1) {
-        int status = SSL_shutdown(ssl);
-        if (status == 1) {
-            break;
-        }
+        if (ssl_connection->user.connection != NULL)
+            SSL_free(ssl_connection->user.connection);
 
-        if (status == -1) {
-            int decodedError = SSL_get_error(ssl, status);
+        if (ssl_connection->host.connection != NULL)
+            SSL_free(ssl_connection->host.connection);
 
-            if (decodedError == SSL_ERROR_WANT_READ) {
-                int result = select(max_fd, &read_fds, NULL, NULL, NULL);
-                if (result == -1) {
-                    printf("(error) Read-select error\n");
-                    return EXIT_FAILURE;
-                }
-            } else if (decodedError == SSL_ERROR_WANT_WRITE) {
-                int result = select(max_fd, NULL, &read_fds, NULL, NULL);
-                if (result == -1) {
-                    printf("(error) Write-select error.\n");
-                    return EXIT_FAILURE;
-                }
-            } else {
-                printf("(error) Error closing SSL connection.  err=%x\n",
-                       decodedError);
-                return EXIT_FAILURE;
-            }
-        }
+        if (ssl_connection->user.fd != 0)
+            close(ssl_connection->user.fd);
+
+        if (ssl_connection->host.fd != 0)
+            close(ssl_connection->host.fd);
     }
 
-    return EXIT_SUCCESS;
+    ssl_connection->user.fd = 0;
+    ssl_connection->user.connection = NULL;
+
+    ssl_connection->host.fd = 0;
+    ssl_connection->host.connection = NULL;
+
+    memset(ssl_connection->hostname, 0, DOMAIN_MAX_SIZE);
+    memset(ssl_connection->sni, 0, DOMAIN_MAX_SIZE);
+    memset(ssl_connection->port, 0, PORT_MAX_SIZE);
 }

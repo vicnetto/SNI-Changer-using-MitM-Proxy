@@ -1,9 +1,9 @@
 #ifndef TLS_COMMON_C
 
 #include <openssl/ssl.h>
+#include <stdbool.h>
 
-#define BUFFER_MAX_SIZE 1024
-#define DOMAIN_MAX_SIZE 100
+#define DOMAIN_MAX_SIZE 255
 #define PORT_MAX_SIZE 5
 
 struct socket {
@@ -19,7 +19,9 @@ struct ssl_connection {
     char port[PORT_MAX_SIZE];
 };
 
-int do_tls_handshake(SSL *ssl, int fd, int type);
-int do_tls_shutdown(SSL *ssl, int fd);
+SSL_CTX *create_ssl_context();
+int do_tls_handshake(SSL *ssl, int fd, bool is_server);
+void clean_SSL_connection(struct ssl_connection *ssl_connection,
+                          bool should_free);
 
 #endif // TLS_COMMON_C

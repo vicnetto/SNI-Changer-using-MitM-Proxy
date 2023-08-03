@@ -1,106 +1,67 @@
 #include "buffer/buffer-reader.h"
-#include "cert/cert.h"
 #include "tls/tls-client.h"
 #include "tls/tls-server.h"
 
 #include <netinet/in.h>
-#include <openssl/err.h>
-#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include <openssl/ssl.h>
 #include <string.h>
 #include <sys/select.h>
-#include <unistd.h>
 
 #define SERVER_PORT 8080
-#define ROOT_CA_CERTIFICATE_LOCATION "cert/cert-test/rootCA.pem"
-#define ROOT_CA_KEY_LOCATION "cert/cert-test/rootCA.key"
 #define MAX_CONNECTIONS 200
 
-/*
- * Creates factory of SSL connections, specifying that we want to create a
- * TLS server.
+/**
+ * Iterate through all elements of the connection to update the FD_SET passed as
+ * a parameter. This FD_SET will be used by a select function to check if any
+ * socket has data to be read.
  *
- * @return SSL_CTX -> Configured context.
+ * @param ssl_connections -> Array with all connections.
+ * @param read_fds -> FD_SET that will be filled.
+ * @param max_fd -> Max FD value of the sockets.
  */
-SSL_CTX *create_ssl_context() {
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    // Specify method.
-    method = TLS_server_method();
-
-    ctx = SSL_CTX_new(method);
-    if (!ctx) {
-        perror("(error) Unable to create SSL context\n");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
-
-/*
- * Configures the certificate used by the server when any connection asks for a
- * certificate.
- *
- * @param SSL_CTX *ctx -> Context used to create the SSL connections.
- */
-void configure_ssl_context(SSL_CTX *ctx, char *hostname) {
-
-    EVP_PKEY *key = NULL;
-    X509 *crt = NULL;
-
-    generate_certificate(ROOT_CA_KEY_LOCATION, ROOT_CA_CERTIFICATE_LOCATION,
-                         &key, &crt, hostname);
-    // Set certificate
-    if (SSL_CTX_use_certificate(ctx, crt) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    // Set key
-    if (SSL_CTX_use_PrivateKey(ctx, key) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
-}
-
 void update_FDSET_with_all_connected_sockets(
-    struct ssl_connection *ssl_connections, fd_set *read_fds, int *max_fd) {
+    const struct ssl_connection *ssl_connections, fd_set *read_fds, int *max_fd,
+    int server_fd) {
+    FD_ZERO(read_fds);
+    FD_SET(server_fd, read_fds);
+    *max_fd = server_fd;
 
+    // Iterates over all elements of the connection array.
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        int client_fd = ssl_connections[i].user.fd;
-        int server_fd = ssl_connections[i].host.fd;
+        int user_fd = ssl_connections[i].user.fd;
+        int host_fd = ssl_connections[i].host.fd;
 
-        // Add sd to the list of select.
-        if (client_fd > 0)
-            FD_SET(client_fd, read_fds);
+        // Add FD to the list if available.
+        if (user_fd > 0)
+            FD_SET(user_fd, read_fds);
 
-        if (server_fd > 0)
-            FD_SET(server_fd, read_fds);
+        if (host_fd > 0)
+            FD_SET(host_fd, read_fds);
 
-        // Find the max value of sd, to the select function.
-        if (client_fd > *max_fd)
-            *max_fd = client_fd;
+        // Find the max value of FD.
+        if (user_fd > *max_fd)
+            *max_fd = user_fd;
 
-        if (server_fd > *max_fd)
-            *max_fd = server_fd;
+        if (host_fd > *max_fd)
+            *max_fd = host_fd;
     }
 }
 
+/**
+ * Find a not used position on the ssl_connection list.
+ *
+ * @param ssl_connections -> List of all connections.
+ * @return -> >= 0 in case of free position, otherwise -1.
+ */
 int find_empty_position_in_ssl_connection_list(
-    struct ssl_connection *ssl_connections) {
+    const struct ssl_connection *ssl_connections) {
+
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
 
-        // If position is empty
+        // If position is empty, return the position.
         if (ssl_connections[i].user.fd == 0) {
             return i;
         }
@@ -109,68 +70,183 @@ int find_empty_position_in_ssl_connection_list(
     return -1;
 }
 
-void free_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
-    if (ssl_connection->user.connection != NULL)
-        SSL_free(ssl_connection->user.connection);
+/**
+ * Verify if the system socket is still open.
+ *
+ * @param ssl_connection -> Connection attached to the socket to clean if the
+ * socket is closed.
+ * @param socket_fd -> Socket fd.
+ * @return -> True if is still open, and false if it isn't.
+ */
+bool is_socket_still_open(struct ssl_connection *ssl_connection,
+                          int socket_fd) {
+    char socket_peek;
 
-    if (ssl_connection->host.connection != NULL)
-        SSL_free(ssl_connection->host.connection);
+    // Make a peek in the socket (without blocking), to see if it is possible to
+    // use the socket.
+    if (recv(socket_fd, &socket_peek, 1, MSG_PEEK) == 0) {
+        clean_SSL_connection(ssl_connection, true);
+        return false;
+    }
 
-    if (ssl_connection->user.fd != 0)
-        close(ssl_connection->user.fd);
-
-    if (ssl_connection->host.fd != 0)
-        close(ssl_connection->host.fd);
+    return true;
 }
 
-void clean_data_in_SSL_connection(struct ssl_connection *ssl_connection) {
-    ssl_connection->user.fd = 0;
-    ssl_connection->user.connection = NULL;
+/**
+ * Create two TLS connections, one with the user and another with the
+ * destination server.
+ *
+ * @param ctx -> All the configuration of the SSL connection.
+ * @param root_ca -> Root certificate.
+ * @param ssl_connection -> In which element of the array the connection will be
+ * saved.
+ * @param server_fd -> FD of the server socket.
+ */
+int create_two_sided_tls_handshake(SSL_CTX *ctx, struct root_ca root_ca,
+                                   struct ssl_connection *ssl_connection,
+                                   int server_fd) {
+    // Create TLS with the user.
+    int status = create_TLS_connection_with_user(ctx, root_ca, ssl_connection,
+                                                 server_fd);
 
-    ssl_connection->host.fd = 0;
-    ssl_connection->host.connection = NULL;
+    // If everything went wrong, clean the SSL connection and continues.
+    if (status == -1) {
+        clean_SSL_connection(ssl_connection, true);
+        return -1;
+    } else {
+        // Create TLS with the destination server.
+        status = create_TLS_connection_with_host_with_changed_SNI(
+            ctx, ssl_connection);
 
-    memset(ssl_connection->hostname, 0, DOMAIN_MAX_SIZE);
-    memset(ssl_connection->sni, 0, DOMAIN_MAX_SIZE);
-    memset(ssl_connection->port, 0, PORT_MAX_SIZE);
+        // In case of failure, clean the SSL connection.
+        if (status == -1) {
+            clean_SSL_connection(ssl_connection, true);
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
-void free_and_clean_SSL_connection(struct ssl_connection *ssl_connection) {
-    free_data_in_SSL_connection(ssl_connection);
-    clean_data_in_SSL_connection(ssl_connection);
+/**
+ * Establish a new connection with the user and the host.
+ *
+ * @param ctx -> Configure context to create SSL connections.
+ * @param root_ca -> Root certificate.
+ * @param ssl_connections -> All the current connections.
+ * @param server_fd -> Server FD to listen to connections.
+ * @return -> 0 success, -1 otherwise.
+ */
+int establish_new_connection(SSL_CTX *ctx, struct root_ca root_ca,
+                             struct ssl_connection *ssl_connections,
+                             int server_fd) {
+    printf("(debug) > NEW CONNECTION <\n");
+
+    int empty_position =
+        find_empty_position_in_ssl_connection_list(ssl_connections);
+    printf("(info) Empty position: %d\n", empty_position);
+
+    // There is no more space in the array to create a new connection.
+    if (empty_position == -1) {
+        printf("(error) Missing space for instanciating new "
+               "connections.\n");
+        exit(1);
+    }
+
+    if (create_two_sided_tls_handshake(
+            ctx, root_ca, &ssl_connections[empty_position], server_fd) == -1) {
+        printf("(debug) > END CONNECTION (FAILED) <\n");
+        return -1;
+    }
+
+    printf("(debug) > CONNECTION ESTABLISHED <\n");
+
+    return 0;
 }
 
-int main() {
+/**
+ * Send a message from a origin to a destination, using TCP tunnels with SSL
+ * encryption.
+ *
+ * @param ssl_connection -> Connection information.
+ * @param is_host_destination -> True if destination is the host, and false if
+ * it is the user.
+ * @return -> 0 success, -1 otherwise.
+ */
+int transfer_SSL_message(struct ssl_connection *ssl_connection,
+                         bool is_host_destination) {
+    int total_bytes;
 
-    // Ignore broken pipe signals.
+    SSL *origin = is_host_destination ? ssl_connection->user.connection
+                                      : ssl_connection->host.connection;
+    SSL *destination = is_host_destination ? ssl_connection->host.connection
+                                           : ssl_connection->user.connection;
+
+    bool end_connection = false;
+    char *request_body = read_data_from_ssl(origin, &end_connection, &total_bytes);
+
+    if (end_connection) {
+        clean_SSL_connection(ssl_connection, true);
+
+        return -1;
+    } else {
+        write_data_in_ssl(destination, request_body, total_bytes);
+
+        if (is_host_destination) {
+            printf("(debug) Request sent from %d to %s!\n",
+                   ssl_connection->user.fd, ssl_connection->hostname);
+        } else {
+            printf("(debug) Response sent from %s to %d!\n",
+                   ssl_connection->hostname, ssl_connection->user.fd);
+        }
+    }
+
+    free(request_body);
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+
+    if (argc != 4) {
+        printf(
+            "Usage: %s <root-ca-location> <root-key-location> <key-password>\n",
+            argv[0]);
+        return 1;
+    }
+
+    struct root_ca root_ca;
+    // Load ROOT-CA key and certificate
+    if (load_root_ca_key_and_crt(&root_ca, argv[2], argv[1], argv[3]) == -1) {
+        fprintf(stderr,
+                "Failed to load the root certificate and/or the root key!\n");
+        return -1;
+    }
+
+    // Ignore broken pipe signals (OpenSSL recommendation).
     signal(SIGPIPE, SIG_IGN);
 
     SSL_CTX *ctx = create_ssl_context();
 
-    // Add the correct address to the tcp socket.
+    // Add the correct address to the tcp socket and create server socket.
     struct sockaddr_in server_address;
     set_address(&server_address, INADDR_ANY, SERVER_PORT);
-
-    // Create socket and returng the FD.
     int server_fd = create_server_socket(server_address, 8080);
 
+    // Create array with the information of all connections.
     struct ssl_connection ssl_connections[MAX_CONNECTIONS];
-    fd_set read_fds;
 
     // Initialize all sockets with zero.
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        clean_data_in_SSL_connection(&ssl_connections[i]);
+        clean_SSL_connection(&ssl_connections[i], false);
     }
 
-    bool is_first_part = true;
+    fd_set read_fds;
 
     while (1) {
-        FD_ZERO(&read_fds);
-        FD_SET(server_fd, &read_fds);
         int max_fd = server_fd;
-
         update_FDSET_with_all_connected_sockets(ssl_connections, &read_fds,
-                                                &max_fd);
+                                                &max_fd, server_fd);
 
         if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) {
             printf("(error) Error in user select!\n");
@@ -178,112 +254,36 @@ int main() {
         }
 
         // New connection to the server
-        if (FD_ISSET(server_fd, &read_fds)) {
-            int empty_position =
-                find_empty_position_in_ssl_connection_list(ssl_connections);
-            printf("(info) Empty position: %d\n", empty_position);
-
-            if (empty_position == -1) {
-                printf("(error) Missing space for instanciating new "
-                       "connections.\n");
-                exit(1);
-            }
-
-            int status = create_TLS_connection_with_user(
-                ctx, &ssl_connections[empty_position], server_fd);
-
-            // Create TLS with user and host.
-            if (status == EXIT_FAILURE) {
-                free_and_clean_SSL_connection(&ssl_connections[empty_position]);
-            } else {
-                status = create_TLS_connection_with_host_with_changed_SNI(
-                    ctx, &ssl_connections[empty_position]);
-
-                if (status == EXIT_FAILURE) {
-                    free_and_clean_SSL_connection(
-                        &ssl_connections[empty_position]);
-
-                    FD_ZERO(&read_fds);
-                    FD_SET(server_fd, &read_fds);
-                    max_fd = server_fd;
-
-                    update_FDSET_with_all_connected_sockets(ssl_connections,
-                                                            &read_fds, &max_fd);
-                }
-            }
+        if (FD_ISSET(server_fd, &read_fds) &&
+            establish_new_connection(ctx, root_ca, ssl_connections,
+                                     server_fd) == -1) {
+            continue;
         }
 
+        int current_user_fd;
+        int current_host_fd;
+
         // Read all sockets to see if message has arrived.
-        char socket_peek;
-        int current_user_fd, current_host_fd;
         for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            struct ssl_connection *current_connection = &ssl_connections[i];
             current_user_fd = ssl_connections[i].user.fd;
             current_host_fd = ssl_connections[i].host.fd;
 
-            if (recv(ssl_connections[i].user.fd, &socket_peek, 1, MSG_PEEK) ==
-                0) {
-                free_and_clean_SSL_connection(&ssl_connections[i]);
+            if (!is_socket_still_open(current_connection, current_user_fd) ||
+                !is_socket_still_open(current_connection, current_host_fd))
                 break;
-            }
-
-            if (recv(ssl_connections[i].host.fd, &socket_peek, 1, MSG_PEEK) ==
-                0) {
-                free_and_clean_SSL_connection(&ssl_connections[i]);
-                break;
-            }
 
             // Verify if any request was sent by the user.
             if (FD_ISSET(current_user_fd, &read_fds)) {
-                int total_bytes;
-                printf("(info) Reading data from send.\n");
-                char *request_body =
-                    read_data_from_ssl(ssl_connections[i].user.connection, &total_bytes);
-
-                if (total_bytes == 0) {
-                    printf(
-                        "\n(info) Connection closed with %s and socket %d!\n",
-                        ssl_connections[i].hostname, current_user_fd);
-
-                    free_and_clean_SSL_connection(&ssl_connections[i]);
-                    break;
-                } else {
-                    write_data_in_ssl(ssl_connections[i].host.connection,
-                                      request_body, total_bytes);
-                    printf("(debug) Request sent to %s!\n", ssl_connections[i].hostname);
-                }
-
-                free(request_body);
+                transfer_SSL_message(&ssl_connections[i], true);
                 continue;
             }
 
             // Verify if any response was sent by the host.
             if (FD_ISSET(current_host_fd, &read_fds)) {
-                int total_bytes = 0;
-                printf("(info) Reading data from response.\n");
-                char *response_body =
-                    read_data_from_ssl(ssl_connections[i].host.connection,
-                                       &total_bytes);
-
-                if (total_bytes == 0) {
-                    printf("(info) Connection closed with %s and socket %d\n",
-                           ssl_connections[i].hostname, current_host_fd);
-
-                    free_and_clean_SSL_connection(&ssl_connections[i]);
-                    break;
-                } else {
-                    printf("(info) Writing data from response.\n");
-                    write_data_in_ssl(
-                        ssl_connections[i].user.connection,
-                        response_body, total_bytes);
-                    printf("(debug) Response from %s to user!\n",
-                           ssl_connections[i].hostname);
-                }
-
-                free(response_body);
+                transfer_SSL_message(&ssl_connections[i], false);
                 continue;
             }
         }
     }
-
-    return 0;
 }

@@ -1,49 +1,40 @@
-#include <arpa/inet.h>
+#include "tls-server.h"
+
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "../buffer/buffer-reader.h"
-#include "../cert/cert.h"
-#include "tls-common.h"
-
 #define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
-
-#define ROOT_CA_CERTIFICATE_LOCATION "cert/rootCA.pem"
-#define ROOT_CA_KEY_LOCATION "cert/rootCA.key"
 #define CONNECT_MAX_SIZE 4096
-
+#define RESPONSE_TIMEOUT_MS 50
 #define SERVER_PORT 8080
 
 /**
  * Configures the address of the socket.
  *
- * struct sockaddr_in *address -> Address of the socket.
- * ip -> IP of the socket.
- * port -> Port the socket will listen on.
+ * @param address -> Configured address of the socket.
+ * @param ip -> IP of the socket.
+ * @param port -> Port the socket will listen on.
  */
-void set_address(struct sockaddr_in *address, uint32_t ip, int port) {
-    // Set up proxy server address
-    memset(&(*(address)), 0, sizeof(struct sockaddr_in));
+void set_address(struct sockaddr_in *address, uint32_t ip, uint16_t port) {
+    memset(address, 0, sizeof(struct sockaddr_in));
     (*address).sin_family = AF_INET;
     (*address).sin_port = htons(port);
     (*address).sin_addr.s_addr = ip;
 }
 
 /**
- * Creates a new socket and returns the FD value.
+ * Create a new server socket and return his FD.
  *
- * @param struct sockaddr_in address -> Address of the server.
- * @param int port -> Port to access the server.
- * @return int -> FD value of the socket.
+ * @param address -> Address of the server.
+ * @param port -> Port to access the server.
+ * @return -> FD value of the socket.
  */
 int create_server_socket(struct sockaddr_in address, int port) {
     int server_fd;
@@ -86,118 +77,119 @@ int create_server_socket(struct sockaddr_in address, int port) {
     return server_fd;
 }
 
-/*
- * Creates factory of SSL connections, specifying that we want to create a
- * TLS server.
- *
- * @return SSL_CTX -> Configured context.
- */
-SSL_CTX *create_context() {
-    const SSL_METHOD *method;
-    SSL_CTX *ctx;
-
-    // Specify method.
-    method = TLS_server_method();
-
-    ctx = SSL_CTX_new(method);
-    if (!ctx) {
-        perror("(error) Unable to create SSL context\n");
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
-    }
-
-    return ctx;
-}
-
-/*
+/**
  * Configures the certificate used by the server when any connection asks for a
- * certificate.
+ * certificate. The certificate will contain the hostname as DNS and Common
+ * Name.
  *
- * @param SSL_CTX *ctx -> Context used to create the SSL connections.
+ * @param ctx -> Context where the certificate will be saved.
+ * @param hostname -> Hostname of the destination website. Ex: www.example.com
  */
-void configure_context(SSL_CTX *ctx, char *hostname) {
+int create_certificate_for_host(SSL_CTX *ctx, struct root_ca root_ca,
+                                 const char *hostname) {
 
     EVP_PKEY *key = NULL;
     X509 *crt = NULL;
 
-    generate_certificate(ROOT_CA_KEY_LOCATION, ROOT_CA_CERTIFICATE_LOCATION,
-                         &key, &crt, hostname);
-    // Set certificate
+    if (generate_certificate(root_ca, &key, &crt, hostname) == -1)
+        return -1;
+
+    // Set certificate into the context.
     if (SSL_CTX_use_certificate(ctx, crt) <= 0) {
         ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
-    // Set key
+    // Set key into the context.
     if (SSL_CTX_use_PrivateKey(ctx, key) <= 0) {
         ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
-    SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
+    // SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
+
+    return 0;
 }
 
-int extractHost(char *source, char *host, char *port) {
-    if (sscanf(source, "CONNECT %99[^:]:%s", host, port) != 2) {
+/**
+ * Extract the hostname and port from the first message sent by the user. When
+ * using Firefox to connect to https://www.example.com, the following message is
+ * sent:
+ *
+ * CONNECT www.example.com:443 HTTP/1.1
+ * User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101
+ * Firefox/115.0 Proxy-Connection: keep-alive Connection: keep-alive Host:
+ * www.example.com:443
+ *
+ * The first line is read, obtaining the hostname and the port from the request.
+ *
+ * @param message -> Given message.
+ * @param hostname -> Return the extracted hostname.
+ * @param port -> Return the extracted port.
+ * @return -> 0 if success, -1 otherwise.
+ */
+int extract_hostname(const char *message, char *hostname, char *port) {
+    if (sscanf(message, "CONNECT %99[^:]:%s", hostname, port) != 2) {
         printf("(error) Failed to extract domain.\n");
-        return EXIT_FAILURE;
+        return -1;
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 
-int create_TLS_connection_with_user(SSL_CTX *ctx,
+/**
+ *
+ * @param ctx
+ * @param ssl_connection
+ * @param server_fd
+ * @return
+ */
+int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
                                     struct ssl_connection *ssl_connection,
                                     int server_fd) {
+    SSL *ssl;
     struct sockaddr_in client_address;
     unsigned int address_length = sizeof(client_address);
-    SSL *ssl;
-    char connect[BUFFER_MAX_SIZE];
-    size_t written; // readbytes;
 
+    // Accept incoming connection and assign to a new FD.
     int connection_fd =
         accept(server_fd, (struct sockaddr *)&client_address, &address_length);
-
-    if (connection_fd < 0) {
-        if (errno != EWOULDBLOCK) {
-            printf("(error) Error in accept.");
-            exit(0);
-        }
+    if (connection_fd < 0 && errno != EWOULDBLOCK) {
+        printf("(error) Error in accept.");
+        exit(0);
     }
 
     // Set fd of the connection.
     ssl_connection->user.fd = connection_fd;
 
-    // fd_set read_fds;
-    // FD_ZERO(&read_fds);
-    // FD_SET(connection_fd, &read_fds);
-    // int max_fd = server_fd;
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(connection_fd, &read_fds);
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = RESPONSE_TIMEOUT_MS;
 
-    // struct timeval timeout;
-    // timeout.tv_sec = 0;
-    // timeout.tv_usec = 10;
-
-    // int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
-    // if (status == 0) {
-    //     printf("(error) Read timed out .\n");
-    //     return EXIT_FAILURE;
-    // }
-
-    printf("========================== BEGIN "
-           "===============================\n");
-    printf("Connection fd: %d\n", connection_fd);
-
-    // Read the request from the client.
-    int size = read(connection_fd, connect, CONNECT_MAX_SIZE);
-    if (size <= 0) {
-        printf("(error) Error reading user socket.\n");
-        return EXIT_FAILURE;
+    // If the incoming connection does not send data in the RESPONSE_TIMEOUT_MS,
+    // the socket will be closed.
+    int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
+    if (status == 0) {
+        printf("(error) Read timed out.\n");
+        return -1;
     }
 
-    connect[size] = '\0';
-    printf("(info) Message:\n%s", connect);
+    printf("(info) Connection fd: %d\n", connection_fd);
 
-    // Set socket to non-block mode.
+    char connect_message[CONNECT_MAX_SIZE];
+
+    // Read the CONNECT from the client.
+    size_t size = read(connection_fd, connect_message, CONNECT_MAX_SIZE);
+    if (size <= 0) {
+        printf("(error) Error reading user socket.\n");
+        return -1;
+    }
+    connect_message[size] = '\0';
+
+    // Set new connection socket to non-blocking mode.
     if (fcntl(connection_fd, F_SETFL, O_NONBLOCK) == -1) {
         perror("Error setting socket to non-blocking mode");
         close(connection_fd);
@@ -205,35 +197,35 @@ int create_TLS_connection_with_user(SSL_CTX *ctx,
     }
 
     // Get the hostname and the port.
-    extractHost(connect, ssl_connection->hostname, ssl_connection->port);
+    extract_hostname(connect_message, ssl_connection->hostname,
+                     ssl_connection->port);
     strcpy(ssl_connection->sni, ssl_connection->hostname);
 
-    printf("(debug) CONNECT Host: %s / Port: %s\n", ssl_connection->hostname,
-           ssl_connection->port);
-
-    // Send a message stating that the connection has been established with
-    // the destination server.
-    char *proxy_response = DEFAULT_RESPONSE_TO_CLIENT;
-    ssize_t bytesSent =
+    // Send a message to the client informing that the connection was made, to
+    // create a direct TLS connection with it.
+    const char *proxy_response = DEFAULT_RESPONSE_TO_CLIENT;
+    ssize_t bytes_sent =
         write(connection_fd, proxy_response, strlen(proxy_response));
-    if (bytesSent < 0) {
-        perror("(error) Failed to send response to the client\n");
-        close(connection_fd);
-        exit(1);
+    if (bytes_sent < 0) {
+        perror("(error) Failed to send response to the client.\n");
+        return -1;
     }
 
     printf("(debug) Message sent!\n");
 
     // Create a new certificate with the hostname.
-    configure_context(ctx, ssl_connection->hostname);
+    if (create_certificate_for_host(ctx, root_ca, ssl_connection->hostname) == -1)
+        return -1;
 
     // Create SSL connection with changed certificate.
     ssl = SSL_new(ctx);
     SSL_set_fd(ssl, connection_fd);
 
-    if (do_tls_handshake(ssl, connection_fd, 1) == EXIT_FAILURE)
-        return EXIT_FAILURE;
+    if (do_tls_handshake(ssl, connection_fd, true) == -1)
+        return -1;
 
+    // Assign new TLS connection to user.
     ssl_connection->user.connection = ssl;
+
     return EXIT_SUCCESS;
 }
