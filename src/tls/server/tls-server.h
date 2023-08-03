@@ -1,11 +1,11 @@
 #ifndef TLS_SERVER_H
 #define TLS_SERVER_H
 
-#include "../cert/cert.h"
+#include "../../cert/cert.h"
 
 #ifndef INCLUDE_TLS_HANDSHAKE_H
 #define INCLUDE_TLS_HANDSHAKE_H
-#include "tls-handshake.h"
+#include "../io/tls-handshake.h"
 #endif
 
 #include <netinet/in.h>

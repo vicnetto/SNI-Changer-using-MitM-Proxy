@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "buffer-reader.h"
+#include "tls-io.h"
 
 #define FULL_BUFFER_SIZE 1024
 #define READER_BUFFER_SIZE 160

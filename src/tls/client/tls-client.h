@@ -3,7 +3,7 @@
 
 #ifndef INCLUDE_TLS_HANDSHAKE_H
 #define INCLUDE_TLS_HANDSHAKE_H
-#include "tls-handshake.h"
+#include "../io/tls-handshake.h"
 #endif
 
 #include <openssl/ssl.h>

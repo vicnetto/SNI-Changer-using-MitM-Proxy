@@ -1,6 +1,6 @@
-#include "buffer/buffer-reader.h"
-#include "tls/tls-client.h"
-#include "tls/tls-server.h"
+#include "tls/client/tls-client.h"
+#include "tls/io/tls-io.h"
+#include "tls/server/tls-server.h"
 
 #include <netinet/in.h>
 #include <signal.h>
@@ -9,9 +9,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <openssl/err.h>
 
 #define SERVER_PORT 8080
 #define MAX_CONNECTIONS 200
+
+/**
+ * Creates factory of SSL connections, specifying that we want to create
+ * TLS servers.
+ *
+ * @return SSL_CTX -> Created context.
+ */
+SSL_CTX *create_ssl_context() {
+    const SSL_METHOD *method;
+    SSL_CTX *ctx;
+
+    // Specify method.
+    method = TLS_server_method();
+
+    ctx = SSL_CTX_new(method);
+    if (!ctx) {
+        perror("(error) Unable to create SSL context\n");
+        ERR_print_errors_fp(stderr);
+        exit(EXIT_FAILURE);
+    }
+
+    return ctx;
+}
 
 /**
  * Iterate through all elements of the connection to update the FD_SET passed as
