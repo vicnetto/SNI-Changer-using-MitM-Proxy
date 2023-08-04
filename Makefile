@@ -1,38 +1,30 @@
-CC=gcc
-CFLAGS=-Wall -Wextra -g3
-LIBS=-lssl -lcrypto
-# Add -Werror when possible
-TARGET=ssl-tls-proxy
-OBJECTS=obj/main.o obj/tls-client.o obj/tls-server.o obj/cert.o obj/tls-io.o obj/tls-handshake.o obj/configuration.o
+# C
+CC ?= gcc
+CFLAGS ?= -Wall -Wextra -g3
+LIBS ?= -lssl -lcrypto
+TARGET_EXEC ?= ssl-tls-proxy
 
-all: create_object_and_out_directories $(TARGET)
+# Path
+OBJ_DIR ?= ./obj
+SRC_DIRS ?= ./src
+SRCS := $(shell find $(SRC_DIRS) -name *.c)
+OBJS := $(SRCS:%=$(OBJ_DIR)/%.o)
+DEPS := $(OBJS:.o=.h)
 
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $(TARGET) $(LIBS)
+# Build target
+$(OBJ_DIR)/$(TARGET_EXEC): $(OBJS)
+	$(CC) $(OBJS) -o $(TARGET_EXEC) $(LIBS)
 
-obj/main.o: src/main.c
-	$(CC) $(CFLAGS) -o obj/main.o -c src/main.c
+# Build all the binary files
+$(OBJ_DIR)/%.c.o: %.c
+	$(MKDIR_P) $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-obj/tls-client.o: src/tls/client/tls-client.c
-	$(CC) $(CFLAGS) -o obj/tls-client.o -c src/tls/client/tls-client.c
-
-obj/tls-server.o: src/tls/server/tls-server.c
-	$(CC) $(CFLAGS) -o obj/tls-server.o -c src/tls/server/tls-server.c
-
-obj/tls-io.o: src/tls/io/tls-io.c
-	$(CC) $(CFLAGS) -o obj/tls-io.o -c src/tls/io/tls-io.c
-
-obj/tls-handshake.o: src/tls/io/tls-handshake.c
-	$(CC) $(CFLAGS) -o obj/tls-handshake.o -c src/tls/io/tls-handshake.c
-
-obj/cert.o: src/cert/cert.c
-	$(CC) $(CFLAGS) -o obj/cert.o -c src/cert/cert.c
-
-obj/configuration.o: src/config/configuration.c
-	$(CC) $(CFLAGS) -o obj/configuration.o -c src/config/configuration.c
-
-create_object_and_out_directories:
-	mkdir -p obj
+.PHONY: clean
 
 clean:
-	rm -rf obj/ $(TARGET)
+	rm -r $(OBJ_DIR)
+	rm $(TARGET_EXEC)
+
+-include $(DEPS)
+MKDIR_P ?= mkdir -p
