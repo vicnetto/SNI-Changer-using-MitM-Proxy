@@ -8,14 +8,6 @@
 #include <openssl/x509v3.h>
 #include <stdio.h>
 
-#define RSA_KEY_BITS (4096)
-
-#define DN_COUNTRY "FR"
-#define DN_STATE "Lorraine"
-#define DN_LOCALITY "Nancy"
-#define DN_ORGANIZATION "LORIA"
-#define DN_ORGANIZATION_UNIT "RESIST"
-
 /**
  * Load root cert and root key to sign the generated certificates.
  *

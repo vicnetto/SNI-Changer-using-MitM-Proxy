@@ -1,17 +1,11 @@
+#include "tls-io.h"
+
 #include <errno.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include "tls-io.h"
-
-#define FULL_BUFFER_SIZE 1024
-#define READER_BUFFER_SIZE 160
-#define SLEEP_TIME 10
-#define MAX_RETRIES_TO_START_READING 10
-#define MAX_RETRIES_TO_STOP_READING 3
 
 /**
  * Sleep for X milliseconds.
@@ -59,7 +53,7 @@ int treat_SSL_read_error(int err, int *attempts_after_end_message,
         // next read. Eventually, all frames will be processed, and the reading
         // process should conclude after exhausting all attempts.
         *attempts_after_end_message += 1;
-        milliseconds_sleep(SLEEP_TIME);
+        milliseconds_sleep(IO_WAIT_TIME_MS);
 
         if (*attempts_after_end_message == MAX_RETRIES_TO_STOP_READING)
             return -1;
@@ -85,7 +79,7 @@ int treat_SSL_read_error(int err, int *attempts_after_end_message,
  */
 int wait_for_first_message(int *attempts_to_get_first_message) {
     *attempts_to_get_first_message += 1;
-    milliseconds_sleep(SLEEP_TIME);
+    milliseconds_sleep(IO_WAIT_TIME_MS);
 
     if (*attempts_to_get_first_message == MAX_RETRIES_TO_START_READING)
         return -1;
@@ -108,7 +102,7 @@ void save_read_data(char **body, const char *read_buffer, int *allocated_space,
                     int total_bytes, int read_bytes) {
     char *reallocated_body;
 
-    if (*allocated_space - READER_BUFFER_SIZE >= total_bytes)
+    if (*allocated_space - BUFFER_SIZE >= total_bytes)
         memcpy(*body + total_bytes, read_buffer, read_bytes);
     else {
         // Duplicate body memory.
@@ -133,16 +127,16 @@ char *read_data_from_ssl(SSL *ssl, bool *end_connection, int *total_bytes) {
     bool first_reading_done = false;
     int attempts_after_end_message = 0;
     int attempts_to_get_first_message = 0;
-    int allocated_space = FULL_BUFFER_SIZE;
+    int allocated_space = BUFFER_SIZE + 1;
     int read_bytes;
 
     char *reallocated_body;
 
-    char read_buffer[READER_BUFFER_SIZE + 1];
+    char read_buffer[BUFFER_SIZE + 1];
     char *body = (char *)malloc(allocated_space);
 
     do {
-        read_bytes = SSL_read(ssl, read_buffer, READER_BUFFER_SIZE);
+        read_bytes = SSL_read(ssl, read_buffer, BUFFER_SIZE);
         read_buffer[read_bytes] = '\0';
 
         // If the read operation was successful:

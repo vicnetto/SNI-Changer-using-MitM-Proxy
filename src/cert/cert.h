@@ -1,5 +1,10 @@
 #ifndef CERT_H
 
+#ifndef INCLUDE_CONFIGURATION_H
+#define INCLUDE_CONFIGURATION_H
+#include "../config/configuration.h"
+#endif
+
 #include <openssl/x509v3.h>
 
 struct root_ca {

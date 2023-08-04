@@ -10,11 +10,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define DEFAULT_RESPONSE_TO_CLIENT "HTTP/1.1 200 OK\r\n\r\n"
-#define CONNECT_MAX_SIZE 4096
-#define RESPONSE_TIMEOUT_MS 50
-#define SERVER_PORT 8080
-
 /**
  * Configures the address of the socket.
  *
@@ -106,8 +101,6 @@ int create_certificate_for_host(SSL_CTX *ctx, struct root_ca root_ca,
         return -1;
     }
 
-    // SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
-
     return 0;
 }
 
@@ -179,10 +172,10 @@ int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
 
     printf("(info) Connection fd: %d\n", connection_fd);
 
-    char connect_message[CONNECT_MAX_SIZE];
+    char connect_message[BUFFER_SIZE];
 
     // Read the CONNECT from the client.
-    size_t size = read(connection_fd, connect_message, CONNECT_MAX_SIZE);
+    size_t size = read(connection_fd, connect_message, BUFFER_SIZE);
     if (size <= 0) {
         printf("(error) Error reading user socket.\n");
         return -1;

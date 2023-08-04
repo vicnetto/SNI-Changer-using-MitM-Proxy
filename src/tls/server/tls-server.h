@@ -8,6 +8,11 @@
 #include "../io/tls-handshake.h"
 #endif
 
+#ifndef INCLUDE_CONFIGURATION_H
+#define INCLUDE_CONFIGURATION_H
+#include "../../config/configuration.h"
+#endif
+
 #include <netinet/in.h>
 #include <openssl/ssl.h>
 #include <stdint.h>

@@ -1,6 +1,5 @@
 #include "tls-handshake.h"
 
-#include <openssl/err.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>

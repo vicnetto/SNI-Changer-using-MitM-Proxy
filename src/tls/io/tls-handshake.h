@@ -3,8 +3,10 @@
 #include <openssl/ssl.h>
 #include <stdbool.h>
 
-#define DOMAIN_MAX_SIZE 255
-#define PORT_MAX_SIZE 5
+#ifndef INCLUDE_CONFIGURATION_H
+#define INCLUDE_CONFIGURATION_H
+#include "../../config/configuration.h"
+#endif
 
 struct socket {
     int fd;
