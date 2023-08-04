@@ -9,6 +9,7 @@
 #include <openssl/ssl.h>
 
 int create_TLS_connection_with_host_with_changed_SNI(
-    SSL_CTX *ctx, struct ssl_connection *ssl_connection);
+    SSL_CTX *ctx, struct sni_change *sni_changes,
+    struct ssl_connection *ssl_connection);
 
 #endif // !TLS_CLIENT_H

@@ -3,7 +3,7 @@ CFLAGS=-Wall -Wextra -g3
 LIBS=-lssl -lcrypto
 # Add -Werror when possible
 TARGET=ssl-tls-proxy
-OBJECTS=obj/main.o obj/tls-client.o obj/tls-server.o obj/cert.o obj/tls-io.o obj/tls-handshake.o
+OBJECTS=obj/main.o obj/tls-client.o obj/tls-server.o obj/cert.o obj/tls-io.o obj/tls-handshake.o obj/configuration.o
 
 all: create_object_and_out_directories $(TARGET)
 
@@ -27,6 +27,9 @@ obj/tls-handshake.o: src/tls/io/tls-handshake.c
 
 obj/cert.o: src/cert/cert.c
 	$(CC) $(CFLAGS) -o obj/cert.o -c src/cert/cert.c
+
+obj/configuration.o: src/config/configuration.c
+	$(CC) $(CFLAGS) -o obj/configuration.o -c src/config/configuration.c
 
 create_object_and_out_directories:
 	mkdir -p obj

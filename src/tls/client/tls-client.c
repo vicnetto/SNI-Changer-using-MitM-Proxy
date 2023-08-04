@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <openssl/ssl.h>
+#include <regex.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -65,18 +66,48 @@ static int create_client_socket(const char *hostname, const char *port) {
 }
 
 /**
+ * Compare domain with domain specified in configuration file. If they match,
+ * the SNI will be changed, according to the configuration. To verify the match,
+ * regex is used.
+ *
+ * @param sni_change -> List of domains for which the SNI should be changed.
+ * @param domain -> Domain of the current website.
+ * @return -> SNI.
+ */
+char *get_sni_from_domain(struct sni_change *sni_changes, char *domain) {
+    if (sni_changes == NULL)
+        return domain;
+
+    for (int i = 0; strlen(sni_changes[i].domain) != 0; ++i) {
+        regex_t regex;
+        int invalid_regex = regcomp(&regex, sni_changes[i].domain, 0);
+        if (invalid_regex)
+            return false;
+
+        // Compare domain with regex to search a match.
+        // Ex: example is a match of www.example.com
+        if (regexec(&regex, domain, 0, NULL, 0) == 0)
+            return sni_changes[i].sni;
+    }
+
+    return domain;
+}
+
+/**
  * Create a TLS connection with the destination host.
  *
  * In the handshake, change the server_name extension to the value available in
  * the struct ssl_connection.
  *
  * @param ctx -> Context to create SSL connections.
+ * @param sni_change -> List of domains for which the SNI should be changed.
  * @param ssl_connection -> Information of the connection, where the connection
  * will be saved.
  * @return int -> 0 if success, -1 otherwise.
  */
 int create_TLS_connection_with_host_with_changed_SNI(
-    SSL_CTX *ctx, struct ssl_connection *ssl_connection) {
+    SSL_CTX *ctx, struct sni_change *sni_changes,
+    struct ssl_connection *ssl_connection) {
 
     printf("(info) Creating TLS connection:\n");
     printf("(info) Hostname: %s\n", ssl_connection->hostname);
@@ -128,6 +159,10 @@ int create_TLS_connection_with_host_with_changed_SNI(
 
     ssl_connection->host.fd = client_fd;
 
+    // Update SNI if needed.
+    strcpy(ssl_connection->sni,
+           get_sni_from_domain(sni_changes, ssl_connection->hostname));
+
     // Tell the server during the handshake which hostname we are attempting
     // to connect to in case the server supports multiple hosts. The hostname
     // used is also called SNI. This is the part that we want to change.
@@ -152,7 +187,8 @@ int create_TLS_connection_with_host_with_changed_SNI(
            ssl_connection->hostname);
 
     // Do the handshake with the server
-    if (do_tls_handshake(ssl_connection->host.connection, client_fd, false) == -1) {
+    if (do_tls_handshake(ssl_connection->host.connection, client_fd, false) ==
+        -1) {
         printf("(error) Handshake error with the user.");
         return -1;
     }
