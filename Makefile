@@ -2,7 +2,7 @@
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -g3
 LIBS ?= -lssl -lcrypto
-TARGET_EXEC ?= ssl-tls-proxy
+TARGET_EXEC ?= sni-changer-using-mitm-proxy
 
 # Path
 OBJ_DIR ?= ./obj

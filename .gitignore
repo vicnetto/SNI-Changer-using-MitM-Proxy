@@ -2,7 +2,7 @@
 obj
 
 # Executable
-ssl-tls-proxy
+sni-changer-using-mitm-proxy
 
 # C formatter lazyvim
 .clang-format
