@@ -57,4 +57,4 @@ Forwarders that have been tested:
 7. **You’re good to go!** Next time, only **step 5 is necessary to run** the project.
 
 ## Credits
-This addon was developed by Victor Netto, [Thibault Cholez](https://github.com/cholezth), and [Xavier Marchal](https://github.com/Nayald) of RESIST research group in [LORIA](https://www.loria.fr/fr/), France.
+This tool was developed by Victor Netto, [Thibault Cholez](https://github.com/cholezth) and [Xavier Marchal](https://github.com/Nayald) of RESIST research group in [LORIA](https://www.loria.fr/fr/), France.
