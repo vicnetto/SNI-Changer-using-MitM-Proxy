@@ -60,7 +60,7 @@ int treat_SSL_read_error(int err, int *attempts_after_end_message,
     } else if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_SYSCALL ||
                err == SSL_ERROR_SSL) {
         // Others errors should not be treated, but only returned.
-        printf("(error) Error in read function!\n");
+        fprintf(stderr, "(error) Error in read function!\n");
         return -1;
     }
 
@@ -185,16 +185,16 @@ int write_data_in_ssl(SSL *ssl, const char *message, int total_bytes) {
     int ret;
 
     if ((ret = SSL_write_ex(ssl, message, total_bytes, &written)) == 0) {
-        printf("(error) Failed to write HTTP request.\n");
+        fprintf(stderr, "(error) Failed to write HTTP request.\n");
 
         int status = SSL_get_error(ssl, ret);
         switch (status) {
         case SSL_ERROR_WANT_WRITE:
         case SSL_ERROR_WANT_READ:
-            printf("(error) Write/read error.\n");
+            fprintf(stderr, "(error) Write/read error.\n");
             return -1;
         default:
-            printf("(error) Error within the SSL connection.\n");
+            fprintf(stderr, "(error) Error within the SSL connection.\n");
             return -1;
         }
     }

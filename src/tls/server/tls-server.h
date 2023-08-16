@@ -19,8 +19,7 @@
 
 void set_address(struct sockaddr_in *address, uint32_t ip, uint16_t port);
 int create_server_socket(struct sockaddr_in address, int port);
-int create_TLS_connection_with_user(SSL_CTX *ctx,
-                                    struct root_ca root_ca,
+int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
                                     struct ssl_connection *ssl_connection,
                                     int server_fd);
 

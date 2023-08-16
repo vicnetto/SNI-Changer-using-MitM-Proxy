@@ -38,18 +38,21 @@ int do_tls_handshake(SSL *ssl, int fd, bool is_server) {
             int result = select(max_fd, &read_fds, NULL, NULL, NULL);
 
             if (result == -1) {
-                printf("Read-select error.\n");
+                fprintf(stderr,
+                        "(error) Read-select error in handshake TLS.\n");
                 return -1;
             }
         } else if (decodedError == SSL_ERROR_WANT_WRITE) {
             int result = select(max_fd, NULL, &read_fds, NULL, NULL);
 
             if (result == -1) {
-                printf("Write-select error.\n");
+                fprintf(stderr,
+                        "(error) Write-select error in handshake TLS.\n");
                 return -1;
             }
         } else {
-            printf("Error creating SSL connection.  err=%x\n", decodedError);
+            fprintf(stderr, "(error) Error creating SSL connection.  err=%x\n",
+                    decodedError);
             return -1;
         }
     }
@@ -66,10 +69,11 @@ int do_tls_handshake(SSL *ssl, int fd, bool is_server) {
 void clean_SSL_connection(struct ssl_connection *ssl_connection,
                           bool should_free) {
     if (should_free) {
-        printf("(info) Connection closed (user-fd/host-fd[hostname]: "
-               "%d/%d[%s]).\n",
-               ssl_connection->user.fd, ssl_connection->host.fd,
-               ssl_connection->hostname);
+        fprintf(stdout,
+                "(info) Connection closed (user-fd/host-fd[hostname]: "
+                "%d/%d[%s]).\n",
+                ssl_connection->user.fd, ssl_connection->host.fd,
+                ssl_connection->hostname);
 
         if (ssl_connection->user.connection != NULL)
             SSL_free(ssl_connection->user.connection);

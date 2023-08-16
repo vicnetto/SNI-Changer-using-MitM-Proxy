@@ -169,27 +169,27 @@ int establish_new_connection(SSL_CTX *ctx, struct sni_change *sni_change,
                              struct root_ca root_ca,
                              struct ssl_connection *ssl_connections,
                              int server_fd) {
-    printf("(debug) > NEW CONNECTION <\n");
+    fprintf(stdout, "(debug) > NEW CONNECTION <\n");
 
     int empty_position =
         find_empty_position_in_ssl_connection_list(ssl_connections);
-    printf("(info) Empty position: %d\n", empty_position);
+    fprintf(stdout, "(info) Empty position: %d\n", empty_position);
 
     // There is no more space in the array to create a new connection.
     if (empty_position == -1) {
-        printf("(error) Missing space for instanciating new "
-               "connections.\n");
+        fprintf(stderr, "(error) Missing space for instantiating new "
+                        "connections.\n");
         exit(1);
     }
 
     if (create_two_sided_tls_handshake(ctx, sni_change, root_ca,
                                        &ssl_connections[empty_position],
                                        server_fd) == -1) {
-        printf("(debug) > END CONNECTION (FAILED) <\n");
+        fprintf(stdout, "(debug) > END CONNECTION (FAILED) <\n");
         return -1;
     }
 
-    printf("(debug) > CONNECTION ESTABLISHED <\n");
+    fprintf(stdout, "(debug) > CONNECTION ESTABLISHED <\n");
 
     return 0;
 }
@@ -224,11 +224,11 @@ int transfer_SSL_message(struct ssl_connection *ssl_connection,
         write_data_in_ssl(destination, request_body, total_bytes);
 
         if (is_host_destination) {
-            printf("(debug) Request sent from %d to %s!\n",
-                   ssl_connection->user.fd, ssl_connection->hostname);
+            fprintf(stdout, "(debug) Request sent from %d to %s!\n",
+                    ssl_connection->user.fd, ssl_connection->hostname);
         } else {
-            printf("(debug) Response sent from %s to %d!\n",
-                   ssl_connection->hostname, ssl_connection->user.fd);
+            fprintf(stdout, "(debug) Response sent from %s to %d!\n",
+                    ssl_connection->hostname, ssl_connection->user.fd);
         }
     }
 
@@ -240,9 +240,10 @@ int transfer_SSL_message(struct ssl_connection *ssl_connection,
 int main(int argc, char *argv[]) {
 
     if (argc != 4) {
-        printf(
-            "Usage: %s <root-ca-location> <root-key-location> <key-password>\n",
-            argv[0]);
+        fprintf(stdout,
+                "(info) Usage: %s <root-ca-location> <root-key-location> "
+                "<key-password>\n",
+                argv[0]);
         return 1;
     }
 
@@ -252,8 +253,8 @@ int main(int argc, char *argv[]) {
     struct root_ca root_ca;
     // Load ROOT-CA key and certificate
     if (load_root_ca_key_and_crt(&root_ca, argv[2], argv[1], argv[3]) == -1) {
-        fprintf(stderr,
-                "Failed to load the root certificate and/or the root key!\n");
+        fprintf(stderr, "(error) Failed to load the root certificate and/or "
+                        "the root key!\n");
         return -1;
     }
 
@@ -283,7 +284,7 @@ int main(int argc, char *argv[]) {
                                                 &max_fd, server_fd);
 
         if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) {
-            printf("(error) Error in user select!\n");
+            fprintf(stderr, "(error) Error in user select!\n");
             exit(0);
         }
 

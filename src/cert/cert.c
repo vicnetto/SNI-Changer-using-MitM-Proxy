@@ -188,7 +188,7 @@ int sign_certificate(EVP_PKEY *ca_key, const X509 *ca_crt, EVP_PKEY **key,
     GENERAL_NAMES *gens = sk_GENERAL_NAME_new_null();
     GENERAL_NAME *gen = GENERAL_NAME_new();
     ASN1_IA5STRING *ia5 = ASN1_IA5STRING_new();
-    ASN1_STRING_set(ia5, hostname, (int) strlen(hostname));
+    ASN1_STRING_set(ia5, hostname, (int)strlen(hostname));
     GENERAL_NAME_set0_value(gen, GEN_DNS, ia5);
     sk_GENERAL_NAME_push(gens, gen);
     X509_add1_ext_i2d(*crt, NID_subject_alt_name, gens, 0, X509V3_ADD_DEFAULT);
@@ -224,7 +224,8 @@ int generate_certificate(struct root_ca root_ca, EVP_PKEY **key, X509 **crt,
                          const char *hostname) {
 
     // Generate signed key and certificate by the CA.
-    int ret = sign_certificate(root_ca.root_ca_key, root_ca.root_ca_crt, key, crt, hostname);
+    int ret = sign_certificate(root_ca.root_ca_key, root_ca.root_ca_crt, key,
+                               crt, hostname);
     if (ret == -1) {
         fprintf(stderr, "(error) Failed to sign certificate!\n");
         return -1;

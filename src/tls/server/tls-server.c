@@ -36,7 +36,7 @@ int create_server_socket(struct sockaddr_in address, int port) {
 
     // Creates a new socket.
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        printf("(error) Failed to create socket.\n");
+        fprintf(stderr, "(error) Failed to create socket.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -44,7 +44,7 @@ int create_server_socket(struct sockaddr_in address, int port) {
     int option = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &option,
                    sizeof(option))) {
-        printf("(error) Failed to set reusable configuration.\n");
+        fprintf(stderr, "(error) Failed to set reusable configuration.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -56,17 +56,17 @@ int create_server_socket(struct sockaddr_in address, int port) {
 
     // Bind the proxy socket to the proxy address
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        printf("(error) Failed to bind proxy socket\n");
+        fprintf(stderr, "(error) Failed to bind proxy socket\n");
         exit(EXIT_FAILURE);
     }
 
     // Listen for client connections
     if (listen(server_fd, SOMAXCONN) < 0) {
-        printf("(error) Failed to listen for client connections\n");
+        fprintf(stderr, "(error) Failed to listen for client connections\n");
         exit(EXIT_FAILURE);
     }
 
-    printf("(info) Proxy server listening on port %d\n", port);
+    fprintf(stdout, "(info) Proxy server listening on port %d\n", port);
 
     // Returns the FD of the socket.
     return server_fd;
@@ -81,7 +81,7 @@ int create_server_socket(struct sockaddr_in address, int port) {
  * @param hostname -> Hostname of the destination website. Ex: www.example.com
  */
 int create_certificate_for_host(SSL_CTX *ctx, struct root_ca root_ca,
-                                 const char *hostname) {
+                                const char *hostname) {
 
     EVP_PKEY *key = NULL;
     X509 *crt = NULL;
@@ -123,7 +123,7 @@ int create_certificate_for_host(SSL_CTX *ctx, struct root_ca root_ca,
  */
 int extract_hostname(const char *message, char *hostname, char *port) {
     if (sscanf(message, "CONNECT %99[^:]:%s", hostname, port) != 2) {
-        printf("(error) Failed to extract domain.\n");
+        fprintf(stderr, "(error) Failed to extract domain.\n");
         return -1;
     }
 
@@ -148,7 +148,7 @@ int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
     int connection_fd =
         accept(server_fd, (struct sockaddr *)&client_address, &address_length);
     if (connection_fd < 0 && errno != EWOULDBLOCK) {
-        printf("(error) Error in accept.");
+        fprintf(stderr, "(error) Error in accept.\n");
         exit(0);
     }
 
@@ -166,18 +166,18 @@ int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
     // the socket will be closed.
     int status = select(connection_fd + 1, &read_fds, NULL, NULL, &timeout);
     if (status == 0) {
-        printf("(error) Read timed out.\n");
+        fprintf(stderr, "(error) Read timed out.\n");
         return -1;
     }
 
-    printf("(info) Connection fd: %d\n", connection_fd);
+    fprintf(stdout, "(info) Connection fd: %d\n", connection_fd);
 
     char connect_message[BUFFER_SIZE];
 
     // Read the CONNECT from the client.
     size_t size = read(connection_fd, connect_message, BUFFER_SIZE);
     if (size <= 0) {
-        printf("(error) Error reading user socket.\n");
+        fprintf(stderr, "(error) Error reading user socket.\n");
         return -1;
     }
     connect_message[size] = '\0';
@@ -204,10 +204,11 @@ int create_TLS_connection_with_user(SSL_CTX *ctx, struct root_ca root_ca,
         return -1;
     }
 
-    printf("(debug) Message sent!\n");
+    fprintf(stdout, "(debug) Message sent!\n");
 
     // Create a new certificate with the hostname.
-    if (create_certificate_for_host(ctx, root_ca, ssl_connection->hostname) == -1)
+    if (create_certificate_for_host(ctx, root_ca, ssl_connection->hostname) ==
+        -1)
         return -1;
 
     // Create SSL connection with changed certificate.

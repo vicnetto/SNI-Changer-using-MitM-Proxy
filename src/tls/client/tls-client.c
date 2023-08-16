@@ -23,7 +23,7 @@ static int create_client_socket(const char *hostname, const char *port) {
     // Instantiate socket.
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == -1) {
-        perror("Error creating socket");
+        fprintf(stderr, "(error) Error creating socket.\n");
         return -1;
     }
 
@@ -33,7 +33,7 @@ static int create_client_socket(const char *hostname, const char *port) {
 
     // Set socket to non-blocking mode.
     if (fcntl(sock, F_SETFL, O_NONBLOCK) == -1) {
-        perror("Error setting socket to non-blocking mode");
+        fprintf(stderr, "(error) Error setting socket to non-blocking mode.\n");
         close(sock);
         return -1;
     }
@@ -47,14 +47,14 @@ static int create_client_socket(const char *hostname, const char *port) {
     // Get IP of the server.
     int status;
     if ((status = getaddrinfo(hostname, port, &hints, &server)) != 0) {
-        printf("(error) Could not resolve hostname: %s\n",
+        fprintf(stderr, "(error) Could not resolve hostname: %s\n",
                gai_strerror(status));
         return -1;
     }
 
     if (connect(sock, server->ai_addr, server->ai_addrlen) == -1 &&
         errno != EINPROGRESS) {
-        printf("(error) Error connecting to server.\n");
+        fprintf(stderr, "(error) Error connecting to server.\n");
         close(sock);
         freeaddrinfo(server);
         return -1;
@@ -109,16 +109,16 @@ int create_TLS_connection_with_host_with_changed_SNI(
     SSL_CTX *ctx, struct sni_change *sni_changes,
     struct ssl_connection *ssl_connection) {
 
-    printf("(info) Creating TLS connection:\n");
-    printf("(info) Hostname: %s\n", ssl_connection->hostname);
-    printf("(info) SNI: %s\n", ssl_connection->sni);
-    printf("(info) Port: %s\n", ssl_connection->port);
+    fprintf(stdout, "(info) Creating TLS connection:\n");
+    fprintf(stdout, "(info) Hostname: %s\n", ssl_connection->hostname);
+    fprintf(stdout, "(info) SNI: %s\n", ssl_connection->sni);
+    fprintf(stdout, "(info) Port: %s\n", ssl_connection->port);
 
     // Create a factory of SSL objects. TLS_client_method() specifies that we
     // want the context for creating clients.
     ctx = SSL_CTX_new(TLS_client_method());
     if (ctx == NULL) {
-        printf("(debug) Failed to create the SSL_CTX\n");
+        fprintf(stderr, "(error) Failed to create the SSL_CTX.\n");
         return -1;
     }
 
@@ -130,20 +130,20 @@ int create_TLS_connection_with_host_with_changed_SNI(
 
     // Use the default trusted certificate store
     if (!SSL_CTX_set_default_verify_paths(ctx)) {
-        printf("Failed to set the default trusted certificate store\n");
+        fprintf(stderr, "(error) Failed to set the default trusted certificate store.\n");
         return -1;
     }
 
     // Require a minimum TLS version of TLSv1.2.
     if (!SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION)) {
-        printf("Failed to set the minimum TLS protocol version\n");
+        fprintf(stderr, "(error) Failed to set the minimum TLS protocol version.\n");
         return -1;
     }
 
     // Create an SSL object to represent the TLS connection
     ssl_connection->host.connection = SSL_new(ctx);
     if (ssl_connection->host.connection == NULL) {
-        printf("Failed to create the SSL object\n");
+        fprintf(stderr, "(error) Failed to create the SSL object.\n");
         return -1;
     }
 
@@ -152,7 +152,7 @@ int create_TLS_connection_with_host_with_changed_SNI(
     int client_fd =
         create_client_socket(ssl_connection->hostname, ssl_connection->port);
     if (client_fd <= 0) {
-        printf("(error) Failed to create the socket\n");
+        fprintf(stderr, "(error) Failed to create the socket.\n");
         return -1;
     }
     SSL_set_fd(ssl_connection->host.connection, client_fd);
@@ -168,32 +168,32 @@ int create_TLS_connection_with_host_with_changed_SNI(
     // used is also called SNI. This is the part that we want to change.
     if (!SSL_set_tlsext_host_name(ssl_connection->host.connection,
                                   ssl_connection->sni)) {
-        printf("Failed to set the SNI hostname\n");
+        fprintf(stderr, "(error) Failed to set the SNI hostname.\n");
         return -1;
     }
 
-    printf("(debug) SNI changed to: %s\n", ssl_connection->sni);
+    fprintf(stdout, "(debug) SNI changed to: %s\n", ssl_connection->sni);
 
     // Ensure we check during certificate verification that the server has
     // supplied a certificate for the hostname that we were expecting. This is
     // optional in our process, for the moment.
     if (!SSL_set1_host(ssl_connection->host.connection,
                        ssl_connection->hostname)) {
-        printf("Failed to set the certificate verification hostname");
+        fprintf(stderr, "(error) Failed to set the certificate verification hostname.");
         return -1;
     }
 
-    printf("(debug) Attempt to handshake with %s...\n",
+    fprintf(stdout, "(debug) Attempt to handshake with %s...\n",
            ssl_connection->hostname);
 
     // Do the handshake with the server
     if (do_tls_handshake(ssl_connection->host.connection, client_fd, false) ==
         -1) {
-        printf("(error) Handshake error with the user.");
+        fprintf(stderr, "(error) Handshake error with the user.");
         return -1;
     }
 
-    printf("(debug) Successful handshake!\n");
+    fprintf(stdout, "(debug) Successful handshake!\n");
 
     return 0;
 }
