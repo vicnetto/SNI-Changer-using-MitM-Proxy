@@ -2,20 +2,24 @@
 
 ## Overview
 
-The SNI-Changer is a tool designed to change the SNI extension of the ClientHello message. To do this, a TLS connection is established with the user, pretending to be the server, thus providing a certificate signed by a user-created root certificate. With the target server, another TLS connection is established, modifying one of the extensions of the TLS protocol, the Server Name Indication (SNI). After both of these connections are in place, any data transmitted between the user and the server is redirected to the opposite party.
+**SNI-Changer-using-Mitm-Proxy** is a tool that modifies the Server Name Indication (SNI) extension inside the TLS `ClientHello` message. It works by using a MITM proxy that intercepts the client's connection and returns a user-created root certificate to the client. The proxy then opens a separate TLS connection to the target server and changes the SNI extension in that `ClientHello`. Once both connections are established, the proxy forwards data between the client and the server, relaying traffic in both directions.
 
 ![image](images/sni-changer-using-mitm-proxy.png)
 
-## What is the ClientHello message?
-When a client (such as a web browser) initiates a secure connection with a server using HTTPS (HTTP Secure), it begins with a step called the "Client Hello." This initial message serves as a greeting and a request to establish a secure connection using the Transport Layer Security (TLS) protocol.
+## What is the `ClientHello` message?
+
+When a client (for example, a web browser) starts a secure HTTPS connection, it begins the TLS handshake by sending a `ClientHello` message. That message announces supported protocol versions, cipher suites, and other extensions (including SNI), essentially saying “hello, here’s what I support; let’s negotiate a secure session.”
 
 ## What is SNI?
-The Server Name Indication (SNI) is a part of the Client Hello message. It's especially important in scenarios where a single server hosts multiple websites or services, each with its own domain name and SSL/TLS certificate. Before SNI, servers could only present a single certificate, often for the default website hosted on the server. SNI resolves this challenge by enabling the client to specify the domain name it's trying to access during the Client Hello.
+
+The **Server Name Indication (SNI)** is an extension in the `ClientHello` that tells the server which hostname the client wants to connect to. This is important when a single server hosts multiple domains with different TLS certificates. Without SNI, the server can only present a single certificate (typically the default site). SNI allows the server to choose the appropriate certificate for the requested hostname during the handshake.
 
 ## Why change the SNI?
-According to the paper [Efficiently Bypassing SNI-based HTTPS Filtering](https://dl.ifip.org/db/conf/im/im2015exp/137348.pdf), there are two different ways to change the SNI to bypass the Firewall:
-- Bypassing Based on Backward Compatibility
-- Bypassing Based on Shared Server Certificate
+
+Modifying the SNI can be used to evade certain types of filtering and censorship. The paper [Efficiently Bypassing SNI-based HTTPS Filtering](https://dl.ifip.org/db/conf/im/im2015exp/137348.pdf) explores techniques that change or abuse the SNI to bypass firewalls and other SNI-based filters. Some approaches discussed include:
+
+- **Bypassing based on backward compatibility:** exploiting how servers handle legacy or fallback behaviors, by removing the SNI.  
+- **Bypassing based on shared server certificates:** using servers that present the same certificate for multiple hostnames to bypass filters.
 
 ## Traffic Redirection
 There are several approaches to redirecting traffic towards the application. Currently, the forwarder must support the **CONNECT** message, which is sent prior to establishing the TLS connection, specifying the destination domain.
