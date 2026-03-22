@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <getopt.h>
 
 /**
  * Creates factory of SSL connections, specifying that we want to create
@@ -239,39 +240,54 @@ int transfer_SSL_message(struct ssl_connection *ssl_connection,
     return 0;
 }
 
+void usage(char *argv[0]) {
+        fprintf(stderr,
+            "Usage: %s --ca <file> --key <file> --pwd <password> [--no-verify]\n", argv[0]);
+            exit(EXIT_FAILURE);
+}
+
 int main(int argc, char *argv[]) {
-
-    if (argc < 4 || argc > 5) {
-        fprintf(stdout,
-                "(info) Usage: %s <root-ca-location> <root-key-location> "
-                "<key-password> [--noverify]\n",
-                argv[0]);
-        return 1;
-    }
-
     ERR_load_crypto_strings();
     SSL_load_error_strings();
 
     struct sni_change *sni_changes = NULL;
     read_config_file(&sni_changes);
 
-    struct root_ca root_ca;
-    // Load ROOT-CA key and certificate
-    if (load_root_ca_key_and_crt(&root_ca, argv[2], argv[1], argv[3]) == -1) {
-        fprintf(stderr, "(error) Failed to load the root certificate and/or "
-                        "the root key!\n");
-        return -1;
+    int opt;
+    bool no_verify = false;
+    char *root_ca_path = NULL;
+    char *root_key_path = NULL;
+    char *password = NULL;
+
+    static struct option long_options[] = {
+        {"ca", required_argument, NULL, 'c'},
+        {"key", required_argument, NULL, 'k'},
+        {"pwd", required_argument, NULL, 'p'},
+        {"no-verify", no_argument, NULL, 'n'},
+        {NULL, 0, NULL, 0},
+    };
+
+    while ((opt = getopt_long(argc, argv, "", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'c': root_ca_path = optarg; break;
+            case 'k': root_key_path = optarg; break;
+            case 'p': password = optarg; break;
+            case 'n': no_verify = true; break;
+            default:
+                usage(argv);
+        }
     }
 
-    bool no_verify = false; // Disable server certificate check
+    // Mandatory parameters
+    if (!root_ca_path || !root_key_path || !password) {
+        usage(argv);
+    }
 
-    if (argc == 5) {
-        if (!strcmp(argv[4], "--noverify")) {
-            no_verify = true;
-        } else {
-            fprintf(stdout, "(error) Invalid option: %s", argv[4]);
-            return 1;
-        }
+    struct root_ca root_ca;
+    // Load ROOT-CA key and certificate
+    if (load_root_ca_key_and_crt(&root_ca, root_key_path, root_ca_path, password) == -1) {
+        fprintf(stderr, "(error) Failed to load the root certificate and/or the root key!\n");
+        return -1;
     }
 
     // Ignore broken pipe signals (OpenSSL recommendation).
