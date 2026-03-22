@@ -52,7 +52,7 @@ int do_tls_handshake(SSL *ssl, int fd, bool is_server) {
                 return -1;
             }
         } else if (decodedError == SSL_ERROR_SSL) {
-            char msg[4096];
+            char msg[BUFFER_SIZE];
             ERR_error_string_n(ERR_get_error(), msg, sizeof(msg));
             fprintf(stderr, "(error) TLS %s error: %s\n", is_server ? "server" : "client", msg);
             return -1;
