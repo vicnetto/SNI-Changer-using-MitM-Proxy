@@ -33,6 +33,16 @@ struct sni_change {
     char sni[DOMAIN_MAX_SIZE];
 };
 
+struct ssl_connect_options {
+    struct sni_change *sni_changes;
+    bool no_verify;
+};
+
 int read_config_file(struct sni_change **sni_changes);
+
+struct ssl_connect_options* create_ssl_connect_options(
+    struct sni_change *sni_change,
+    bool no_verify
+);
 
 #endif // CONFIGURATION_H

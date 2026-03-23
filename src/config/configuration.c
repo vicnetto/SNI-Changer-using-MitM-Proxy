@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 int read_config_file(struct sni_change **sni_changes) {
 
@@ -84,4 +85,17 @@ int read_config_file(struct sni_change **sni_changes) {
 error:
     fclose(config_file);
     exit(0);
+}
+
+struct ssl_connect_options* create_ssl_connect_options(
+    struct sni_change *sni_change,
+    bool no_verify
+) {
+    struct ssl_connect_options* ssl_connect_options = 
+        malloc(sizeof(struct ssl_connect_options));
+
+    ssl_connect_options->sni_changes = sni_change;
+    ssl_connect_options->no_verify = no_verify;
+
+    return ssl_connect_options;
 }

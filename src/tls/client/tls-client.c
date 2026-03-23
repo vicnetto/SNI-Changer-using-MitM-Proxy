@@ -100,14 +100,14 @@ char *get_sni_from_domain(struct sni_change *sni_changes, char *domain) {
  * the struct ssl_connection.
  *
  * @param ctx -> Context to create SSL connections.
- * @param sni_change -> List of domains for which the SNI should be changed.
  * @param ssl_connection -> Information of the connection, where the connection
- * will be saved.
+ * @param ssl_connect_options -> List of options (such as sni_change and no_verify)
  * @return int -> 0 if success, -1 otherwise.
  */
 int create_TLS_connection_with_host_with_changed_SNI(
-    SSL_CTX *ctx, struct sni_change *sni_changes,
-    struct ssl_connection *ssl_connection, bool no_verify) {
+    SSL_CTX *ctx, 
+    struct ssl_connection *ssl_connection,
+    struct ssl_connect_options *ssl_connect_options) {
 
     fprintf(stdout, "(info) Creating TLS connection:\n");
     fprintf(stdout, "(info) Hostname: %s\n", ssl_connection->hostname);
@@ -126,7 +126,7 @@ int create_TLS_connection_with_host_with_changed_SNI(
 
     // Configure the client to abort the handshake if certificate
     // verification fails.
-    if (!no_verify) {
+    if (ssl_connect_options->no_verify) {
         SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     }
 
@@ -163,7 +163,7 @@ int create_TLS_connection_with_host_with_changed_SNI(
 
     // Update SNI if needed.
     strcpy(ssl_connection->sni,
-           get_sni_from_domain(sni_changes, ssl_connection->hostname));
+           get_sni_from_domain(ssl_connect_options->sni_changes, ssl_connection->hostname));
 
     // Tell the server during the handshake which hostname we are attempting
     // to connect to in case the server supports multiple hosts. The hostname

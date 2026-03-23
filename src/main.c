@@ -123,20 +123,19 @@ bool is_socket_still_open(struct ssl_connection *ssl_connection,
  * destination server.
  *
  * @param ctx -> All the configuration of the SSL connection.
- * @param sni_change -> List of domains for which the SNI should be changed.
  * @param root_ca -> Root certificate.
  * @param ssl_connection -> In which element of the array the connection will be
  * saved.
  * @param server_fd -> FD of the server socket.
+ * @param ssl_connect_options -> Connection options.
  */
-int create_two_sided_tls_handshake(SSL_CTX *ctx, struct sni_change *sni_changes,
-                                   struct root_ca root_ca,
+int create_two_sided_tls_handshake(SSL_CTX *ctx,
+                                  struct root_ca root_ca,
                                    struct ssl_connection *ssl_connection,
                                    int server_fd,
-                                   bool no_verify) {
+                                   struct ssl_connect_options *ssl_connect_options) {
     // Create TLS with the user.
-    int status = create_TLS_connection_with_user(ctx, root_ca, ssl_connection,
-                                                 server_fd);
+    int status = create_TLS_connection_with_user(ctx, root_ca, ssl_connection, server_fd);
 
     // If everything went wrong, clean the SSL connection and continues.
     if (status == -1) {
@@ -145,7 +144,7 @@ int create_two_sided_tls_handshake(SSL_CTX *ctx, struct sni_change *sni_changes,
     } else {
         // Create TLS with the destination server.
         status = create_TLS_connection_with_host_with_changed_SNI(
-            ctx, sni_changes, ssl_connection, no_verify);
+            ctx, ssl_connection, ssl_connect_options);
 
         // In case of failure, clean the SSL connection.
         if (status == -1) {
@@ -161,17 +160,17 @@ int create_two_sided_tls_handshake(SSL_CTX *ctx, struct sni_change *sni_changes,
  * Establish a new connection with the user and the host.
  *
  * @param ctx -> Configure context to create SSL connections.
- * @param sni_change -> List of domains for which the SNI should be changed.
  * @param root_ca -> Root certificate.
  * @param ssl_connections -> All the current connections.
  * @param server_fd -> Server FD to listen to connections.
+ * @param ssl_connect_options -> Connection options.
  * @return -> 0 success, -1 otherwise.
  */
-int establish_new_connection(SSL_CTX *ctx, struct sni_change *sni_change,
-                             struct root_ca root_ca,
-                             struct ssl_connection *ssl_connections,
-                             int server_fd,
-                             bool no_verify) {
+int establish_new_connection(SSL_CTX *ctx, 
+                            struct root_ca root_ca,
+                            struct ssl_connection *ssl_connections,
+                            int server_fd,
+                            struct ssl_connect_options *ssl_connect_options) {
     fprintf(stdout, "(debug) > NEW CONNECTION <\n");
 
     int empty_position =
@@ -185,9 +184,8 @@ int establish_new_connection(SSL_CTX *ctx, struct sni_change *sni_change,
         exit(1);
     }
 
-    if (create_two_sided_tls_handshake(ctx, sni_change, root_ca,
-                                       &ssl_connections[empty_position],
-                                       server_fd, no_verify) == -1) {
+    if (create_two_sided_tls_handshake(ctx, root_ca, &ssl_connections[empty_position],
+                                       server_fd, ssl_connect_options) == -1) {
         fprintf(stdout, "(debug) > END CONNECTION (FAILED) <\n");
         return -1;
     }
@@ -283,6 +281,9 @@ int main(int argc, char *argv[]) {
         usage(argv);
     }
 
+    struct ssl_connect_options* ssl_connect_options =
+        create_ssl_connect_options(sni_changes, no_verify);
+
     struct root_ca root_ca;
     // Load ROOT-CA key and certificate
     if (load_root_ca_key_and_crt(&root_ca, root_key_path, root_ca_path, password) == -1) {
@@ -322,8 +323,8 @@ int main(int argc, char *argv[]) {
 
         // New connection to the server
         if (FD_ISSET(server_fd, &read_fds) &&
-            establish_new_connection(ctx, sni_changes, root_ca, ssl_connections,
-                                     server_fd, no_verify) == -1) {
+            establish_new_connection(ctx, root_ca, ssl_connections, server_fd,
+                ssl_connect_options) == -1) {
             continue;
         }
 
