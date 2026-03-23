@@ -30,6 +30,7 @@ Forwarders that have been tested:
 
 - Firefox (using proxy settings).
 - CURL (using the --proxy option).
+- Google Chrome (using Proxy Switcher extension). **// Thanks to [@kalinochkind](https://github.com/kalinochkind)!**
 
 ## Usage
 1. Clone the repository.
