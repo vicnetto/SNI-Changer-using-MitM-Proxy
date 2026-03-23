@@ -53,11 +53,11 @@ Forwarders that have been tested:
 6. Run the application.
 ```shell
     # In case you created your certificate with make cert.
-    $ ./sni-changer-using-mitm-proxy cert/rootCA.pem cert/rootCA.key <key-password>
+    $ ./sni-changer-using-mitm-proxy --ca cert/rootCA.pem --key cert/rootCA.key --pwd <key-password>
     # If you have independently generated your own certificate.
-    $ ./sni-changer-using-mitm-proxy <root-ca-location> <root-key-location> <key-password>
+    $ ./sni-changer-using-mitm-proxy --ca <root-ca-location> --key <root-key-location> --pwd <key-password>
 ```
-You can add the `--noverify` option in the end to disable server TLS certificate check.
+You can add the `--no-verify` option in the end to disable server TLS certificate check.
 
 7. Set the forwarder to the right port.
 - In Firefox: `Setting -> General -> Network Settings -> Settings -> Manual Proxy Configuration`. In HTTPS Proxy, type: `localhost` and port `8080`.
